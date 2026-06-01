@@ -6,7 +6,12 @@ import {
   setHumanoidFlash,
   type HumanoidPalette,
 } from "./humanoid";
-import { addSkyDome, configureRenderer, setupLighting } from "./graphics";
+import {
+  addSkyDome,
+  configureRenderer,
+  createBlobShadowTexture,
+  setupLighting,
+} from "./graphics";
 import { animateLightFighter, createLightFighter, type LightFighter } from "./lightFighter";
 import { createArenaTerrain, sampleTerrainHeight } from "./terrain";
 import "./styles.css";
@@ -116,9 +121,6 @@ const weapons: Weapon[] = [
 ];
 
 const scene = new THREE.Scene();
-const horizonColor = new THREE.Color(0x9eb8d4);
-scene.background = horizonColor.clone();
-scene.fog = new THREE.FogExp2(horizonColor.getHex(), 0.0085);
 
 const camera = new THREE.PerspectiveCamera(
   58,
@@ -132,10 +134,12 @@ const renderer = new THREE.WebGLRenderer({
 });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
-configureRenderer(renderer);
+configureRenderer(renderer, scene);
 app.appendChild(renderer.domElement);
 
-addSkyDome(scene);
+const horizonColor = addSkyDome(scene);
+scene.background = horizonColor.clone();
+scene.fog = new THREE.FogExp2(horizonColor.getHex(), 0.0072);
 setupLighting(scene);
 
 const hud = document.createElement("div");
@@ -223,42 +227,92 @@ const sharedGeometries = {
   weaponTip: new THREE.ConeGeometry(0.14, 0.28, 4),
   rock: new THREE.DodecahedronGeometry(1, 0),
   treeTrunk: new THREE.CylinderGeometry(0.22, 0.34, 2.1, 6),
+  treeLeaves: new THREE.ConeGeometry(1.05, 2.2, 7),
   pickupPlatform: new THREE.CylinderGeometry(0.78, 0.92, 0.18, 10),
   slashRing: new THREE.RingGeometry(0.42, 1, 16, 1, -0.55, 1.1),
 };
 
 const stoneMaterial = new THREE.MeshStandardMaterial({
-  color: 0x6a737f,
-  roughness: 0.88,
-  metalness: 0.04,
+  color: 0x7a8088,
+  roughness: 0.82,
+  metalness: 0.06,
+  envMapIntensity: 0.4,
 });
 const woodMaterial = new THREE.MeshStandardMaterial({
-  color: 0x6b4428,
-  roughness: 0.9,
+  color: 0x5c3d24,
+  roughness: 0.86,
   metalness: 0.02,
+  envMapIntensity: 0.25,
+});
+const leavesMaterial = new THREE.MeshStandardMaterial({
+  color: 0x3f7a48,
+  roughness: 0.78,
+  metalness: 0,
+  emissive: new THREE.Color(0x1a4020),
+  emissiveIntensity: 0.06,
+  envMapIntensity: 0.2,
 });
 const playerPalette: HumanoidPalette = {
-  skin: new THREE.MeshStandardMaterial({ color: 0xe0b48e, roughness: 0.72, metalness: 0.02 }),
-  shirt: new THREE.MeshStandardMaterial({
-    color: 0x4a6270,
-    roughness: 0.78,
-    metalness: 0.18,
-    emissive: new THREE.Color(0x1a2830),
-    emissiveIntensity: 0.08,
+  skin: new THREE.MeshStandardMaterial({
+    color: 0xe8b896,
+    roughness: 0.58,
+    metalness: 0.02,
+    emissive: new THREE.Color(0x6a4030),
+    emissiveIntensity: 0.04,
+    envMapIntensity: 0.35,
   }),
-  pants: new THREE.MeshStandardMaterial({ color: 0x2e3840, roughness: 0.9, metalness: 0.06 }),
-  boots: new THREE.MeshStandardMaterial({ color: 0x1a1410, roughness: 0.88, metalness: 0.1 }),
+  shirt: new THREE.MeshStandardMaterial({
+    color: 0x4a5e6a,
+    roughness: 0.72,
+    metalness: 0.22,
+    envMapIntensity: 0.45,
+  }),
+  pants: new THREE.MeshStandardMaterial({
+    color: 0x2c343c,
+    roughness: 0.88,
+    metalness: 0.05,
+    envMapIntensity: 0.3,
+  }),
+  boots: new THREE.MeshStandardMaterial({
+    color: 0x1c1612,
+    roughness: 0.9,
+    metalness: 0.12,
+    envMapIntensity: 0.25,
+  }),
 };
 const enemyPalette: HumanoidPalette = {
-  skin: new THREE.MeshStandardMaterial({ color: 0xc9a07e, roughness: 0.78, metalness: 0.02 }),
-  shirt: new THREE.MeshStandardMaterial({ color: 0x5a3038, roughness: 0.84, metalness: 0.1 }),
-  pants: new THREE.MeshStandardMaterial({ color: 0x2f2426, roughness: 0.9, metalness: 0.05 }),
-  boots: new THREE.MeshStandardMaterial({ color: 0x141010, roughness: 0.9, metalness: 0.06 }),
+  skin: new THREE.MeshStandardMaterial({
+    color: 0xd4a480,
+    roughness: 0.6,
+    metalness: 0.02,
+    emissive: new THREE.Color(0x5a3828),
+    emissiveIntensity: 0.035,
+    envMapIntensity: 0.32,
+  }),
+  shirt: new THREE.MeshStandardMaterial({
+    color: 0x5c3238,
+    roughness: 0.8,
+    metalness: 0.12,
+    envMapIntensity: 0.38,
+  }),
+  pants: new THREE.MeshStandardMaterial({
+    color: 0x2a2224,
+    roughness: 0.9,
+    metalness: 0.04,
+    envMapIntensity: 0.28,
+  }),
+  boots: new THREE.MeshStandardMaterial({
+    color: 0x141010,
+    roughness: 0.92,
+    metalness: 0.08,
+    envMapIntensity: 0.22,
+  }),
 };
 const gripMaterial = new THREE.MeshStandardMaterial({
-  color: 0x1e1814,
-  roughness: 0.88,
-  metalness: 0.05,
+  color: 0x221c18,
+  roughness: 0.82,
+  metalness: 0.08,
+  envMapIntensity: 0.3,
 });
 const stormMaterial = new THREE.MeshBasicMaterial({
   color: 0x7a5ad8,
@@ -272,10 +326,9 @@ const weaponBladeMaterials = weapons.map(
   (weapon) =>
     new THREE.MeshStandardMaterial({
       color: weapon.color,
-      roughness: 0.28,
-      metalness: 0.88,
-      emissive: new THREE.Color(weapon.color),
-      emissiveIntensity: 0.12,
+      roughness: 0.16,
+      metalness: 0.92,
+      envMapIntensity: 1.1,
     }),
 );
 
@@ -305,6 +358,20 @@ const stormRing = new THREE.Mesh(sharedGeometries.stormRing, stormMaterial);
 stormRing.rotation.x = -Math.PI / 2;
 stormRing.position.y = 0.09;
 scene.add(stormRing);
+
+const blobShadowTexture = createBlobShadowTexture();
+const playerBlobShadow = new THREE.Mesh(
+  new THREE.CircleGeometry(1, 20),
+  new THREE.MeshBasicMaterial({
+    map: blobShadowTexture,
+    transparent: true,
+    opacity: 0.5,
+    depthWrite: false,
+  }),
+);
+playerBlobShadow.rotation.x = -Math.PI / 2;
+playerBlobShadow.renderOrder = -1;
+scene.add(playerBlobShadow);
 
 const player = new THREE.Group();
 scene.add(player);
@@ -601,8 +668,20 @@ function addProps(): void {
     trunks.setMatrixAt(index, dummy.matrix);
   }
   trunks.instanceMatrix.needsUpdate = true;
-  props.add(trunks);
 
+  const leaves = new THREE.InstancedMesh(sharedGeometries.treeLeaves, leavesMaterial, treeCount);
+  leaves.castShadow = false;
+
+  for (let index = 0; index < treeCount; index += 1) {
+    trunks.getMatrixAt(index, dummy.matrix);
+    dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
+    dummy.position.y += 1.55 * dummy.scale.y;
+    dummy.updateMatrix();
+    leaves.setMatrixAt(index, dummy.matrix);
+  }
+  leaves.instanceMatrix.needsUpdate = true;
+
+  props.add(trunks, leaves);
 }
 
 function spawnMatch(): void {
@@ -848,6 +927,13 @@ function updateMovement(delta: number): void {
 
   player.rotation.y = Math.atan2(playerDirection.x, playerDirection.z);
   snapToGround(player);
+  playerBlobShadow.position.set(
+    player.position.x,
+    sampleTerrainHeight(player.position.x, player.position.z) + 0.04,
+    player.position.z,
+  );
+  const shadowScale = 1 + playerVelocity.length() * 0.04;
+  playerBlobShadow.scale.set(shadowScale, shadowScale, 1);
   const swingPhase =
     attackTime > 0 ? 1 - attackTime / Math.max(attackAnimDuration, 0.001) : 0;
   const chargeRatio = THREE.MathUtils.clamp(attackChargeTime / ATTACK_CHARGE_TIME, 0, 1);

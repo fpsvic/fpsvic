@@ -27,7 +27,7 @@ body {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(ellipse at center, transparent 45%, rgb(0 0 0 / 38%) 100%);
+  background: radial-gradient(ellipse at center, transparent 40%, rgb(0 8 18 / 42%) 100%);
   z-index: 5;
 }
 

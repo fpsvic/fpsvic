@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createGroundTexture } from "./graphics";
+import { createGroundMaps, type GroundMaps } from "./graphics";
 
 const ARENA_RADIUS = 90;
 const TERRAIN_SIZE = 184;
@@ -7,7 +7,7 @@ const TERRAIN_SEGMENTS = 12;
 const HEIGHT_CACHE_STEP = 2;
 const heightCache = new Map<number, number>();
 
-let groundTexture: THREE.CanvasTexture | null = null;
+let groundMaps: GroundMaps | null = null;
 
 function heightCacheKey(x: number, z: number): number {
   const qx = Math.round(x / HEIGHT_CACHE_STEP);
@@ -96,15 +96,26 @@ function buildTerrainGeometry(): THREE.BufferGeometry {
     positions.setY(index, height);
 
     const dist = Math.hypot(x, z);
-    const grass = new THREE.Color(0x4a7a48).lerp(new THREE.Color(0x6fa862), height * 0.4);
-    const dirt = new THREE.Color(0x8f7658);
-    const path = new THREE.Color(0xc4aa7a);
-    const pathMask = THREE.MathUtils.smoothstep(dist, 4, 20) * (1 - THREE.MathUtils.smoothstep(dist, 20, 34));
-    const heightTint = THREE.MathUtils.clamp(height * 0.15, 0, 0.35);
+    const slope = Math.min(
+      1,
+      Math.abs(height - sampleTerrainHeight(x + 1.5, z)) * 0.55 +
+        Math.abs(height - sampleTerrainHeight(x, z + 1.5)) * 0.55,
+    );
+    const grassLow = new THREE.Color(0x3f6a3e);
+    const grassHigh = new THREE.Color(0x6b9a5c);
+    const dirt = new THREE.Color(0x7a6348);
+    const rock = new THREE.Color(0x6e6e68);
+    const path = new THREE.Color(0xc9b080);
+    const pathMask =
+      THREE.MathUtils.smoothstep(dist, 5, 18) *
+      (1 - THREE.MathUtils.smoothstep(dist, 18, 32));
+    const slopeMask = THREE.MathUtils.clamp(slope * 1.4, 0, 1);
+    const heightMask = THREE.MathUtils.clamp(height * 0.18, 0, 0.4);
 
-    color.copy(grass);
-    color.lerp(dirt, heightTint);
-    color.lerp(path, pathMask * 0.9);
+    color.copy(grassLow).lerp(grassHigh, heightMask);
+    color.lerp(dirt, slopeMask * 0.75);
+    color.lerp(rock, slopeMask * heightMask * 0.35);
+    color.lerp(path, pathMask * 0.88);
 
     colors[index * 3] = color.r;
     colors[index * 3 + 1] = color.g;
@@ -122,13 +133,18 @@ export type ArenaTerrain = {
 };
 
 export function createArenaTerrain(): ArenaTerrain {
-  if (!groundTexture) {
-    groundTexture = createGroundTexture();
+  if (!groundMaps) {
+    groundMaps = createGroundMaps();
   }
 
-  const material = new THREE.MeshLambertMaterial({
-    map: groundTexture,
+  const material = new THREE.MeshStandardMaterial({
+    map: groundMaps.color,
+    normalMap: groundMaps.normal,
+    normalScale: new THREE.Vector2(0.45, 0.45),
     vertexColors: true,
+    roughness: 0.94,
+    metalness: 0.02,
+    envMapIntensity: 0.35,
   });
 
   const mesh = new THREE.Mesh(buildTerrainGeometry(), material);
