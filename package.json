@@ -1,7 +1,7 @@
 {
   "name": "fpsvic",
   "version": "1.0.0",
-  "description": "A browser-based 3D melee arena battle game prototype.",
+  "description": "Blade Arena — a browser-based 3D melee battle royale.",
   "type": "module",
   "scripts": {
     "dev": "vite",

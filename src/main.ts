@@ -173,16 +173,42 @@ hud.innerHTML = `
 
   <div class="center-message hidden" data-message></div>
 
-  <div class="start-panel" data-start-panel>
-    <h1>Blade Drop Arena</h1>
-    <p>Drop into a grounded 3D battle arena where every fight is close range. Outlast the bots, loot stronger knives, swords, axes, and spears, and stay inside the shrinking storm ring.</p>
-    <button data-start-button>Start match</button>
+  <div class="title-screen start-panel" data-start-panel>
+    <div class="title-screen__backdrop" aria-hidden="true"></div>
+    <div class="title-screen__grid" aria-hidden="true"></div>
+    <div class="title-screen__orb title-screen__orb--left" aria-hidden="true"></div>
+    <div class="title-screen__orb title-screen__orb--right" aria-hidden="true"></div>
+    <div class="title-screen__content">
+      <p class="title-screen__eyebrow">Melee battle royale</p>
+      <h1 class="title-screen__logo">
+        <span class="title-screen__logo-line">Blade</span>
+        <span class="title-screen__logo-line title-screen__logo-line--accent">Arena</span>
+      </h1>
+      <p class="title-screen__tagline">
+        Fight up close in a living arena. Loot blades, hold the storm, and cut through every
+        challenger.
+      </p>
+      <ul class="title-screen__features">
+        <li>Right-click to move</li>
+        <li>Hold <kbd>A</kbd> to charge slashes</li>
+        <li>Shrinking storm ring</li>
+      </ul>
+      <button class="title-screen__cta" type="button" data-start-button>
+        <span class="title-screen__cta-text">Enter the Arena</span>
+        <span class="title-screen__cta-shine" aria-hidden="true"></span>
+      </button>
+      <p class="title-screen__hint">Press <kbd>R</kbd> anytime to restart a match</p>
+    </div>
   </div>
 
-  <div class="end-panel hidden" data-end-panel>
-    <h2 data-end-title>Match over</h2>
-    <p data-end-copy></p>
-    <button data-restart-button>Play again</button>
+  <div class="result-screen end-panel hidden" data-end-panel>
+    <div class="title-screen__backdrop" aria-hidden="true"></div>
+    <div class="result-screen__content">
+      <p class="title-screen__eyebrow">Blade Arena</p>
+      <h2 class="result-screen__title" data-end-title>Match over</h2>
+      <p class="result-screen__copy" data-end-copy></p>
+      <button class="title-screen__cta" type="button" data-restart-button>Play again</button>
+    </div>
   </div>
 `;
 app.appendChild(hud);
