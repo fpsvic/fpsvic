@@ -26,6 +26,8 @@ npm install
 npm run dev
 ```
 
+The dev and preview scripts bind to `0.0.0.0` so hosted preview environments can open the game.
+
 Create a production build with:
 
 ```bash
