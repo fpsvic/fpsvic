@@ -2,7 +2,7 @@ import * as THREE from "three";
 
 const ARENA_RADIUS = 90;
 const TERRAIN_SIZE = 184;
-const TERRAIN_SEGMENTS = 24;
+const TERRAIN_SEGMENTS = 16;
 const HEIGHT_CACHE_STEP = 2;
 const heightCache = new Map<number, number>();
 

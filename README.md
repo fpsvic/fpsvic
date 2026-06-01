@@ -14,7 +14,7 @@ A browser-based 3D melee battle arena built with Vite, TypeScript, and Three.js.
 
 - Right click (on ground): Walk to that point
 - Left mouse drag: Rotate camera
-- `F`: Attack (release before 2s = normal hit; hold 2s+ then release = charged hit)
+- `A`: Slash in front of you (release before 2s = normal; hold 2s+ then release = charged)
 - `Space`: Dash toward move target
 - `E`: Pick up nearby weapon
 - `R`: Restart after a match

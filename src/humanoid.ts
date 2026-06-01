@@ -184,12 +184,41 @@ export function createHumanoid(
   };
 }
 
+/** Forward slash / charge wind-up pose (camera-facing attacks). */
+export function applyAttackPose(
+  rig: HumanoidRig,
+  swingPhase: number,
+  chargeRatio: number,
+  charged: boolean,
+): void {
+  const sweep = Math.sin(Math.min(1, swingPhase) * Math.PI);
+  const wind = chargeRatio * (charged ? 1.15 : 1);
+  const power = charged ? 1.35 : 1;
+
+  rig.torso.rotation.x = -0.12 - sweep * 0.62 * power - wind * 0.38;
+  rig.chest.rotation.x = -wind * 0.22 - sweep * 0.15;
+  rig.rightArm.rotation.x = -0.45 - sweep * 2.35 * power - wind * 1.05;
+  rig.leftArm.rotation.x = sweep * 0.35 + wind * 0.12;
+
+  const rightLower = rig.rightArm.userData.lower as THREE.Group;
+  const leftLower = rig.leftArm.userData.lower as THREE.Group;
+  rightLower.rotation.x = -0.3 - sweep * 1.35 * power - wind * 0.5;
+  leftLower.rotation.x = -0.22 - Math.abs(sweep) * 0.25;
+
+  rig.hips.position.z = sweep * 0.28 * power + wind * 0.06;
+  rig.hips.position.y = 0.02 + sweep * 0.04;
+}
+
 export function animateHumanoid(
   rig: HumanoidRig,
   speed: number,
   phase: number,
   attackSwing: number,
 ): void {
+  rig.hips.position.z = 0;
+  rig.torso.rotation.x = 0;
+  rig.chest.rotation.x = 0;
+
   const moveAmount = THREE.MathUtils.clamp(speed / 5.5, 0, 1);
   const stride = Math.sin(phase) * 0.55 * moveAmount;
   const armStride = Math.sin(phase + Math.PI) * 0.42 * moveAmount;

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import {
   animateHumanoid,
+  applyAttackPose,
   createHumanoid,
   setHumanoidFlash,
   type HumanoidPalette,
@@ -103,7 +104,7 @@ const weapons: Weapon[] = [
 const scene = new THREE.Scene();
 const horizonColor = new THREE.Color(0xa8c0d8);
 scene.background = horizonColor.clone();
-scene.fog = new THREE.Fog(horizonColor.getHex(), 48, 165);
+scene.fog = new THREE.Fog(horizonColor.getHex(), 42, 130);
 
 const camera = new THREE.PerspectiveCamera(
   58,
@@ -118,8 +119,7 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.02;
+renderer.toneMapping = THREE.NoToneMapping;
 renderer.shadowMap.enabled = false;
 app.appendChild(renderer.domElement);
 
@@ -145,7 +145,7 @@ hud.innerHTML = `
     <div class="controls">
       <div><kbd>RMB</kbd> move to point</div>
       <div><kbd>Drag LMB</kbd> rotate camera</div>
-      <div><kbd>F</kbd> attack / hold 2s charge</div>
+      <div><kbd>A</kbd> slash / hold 2s charge</div>
       <div><kbd>Space</kbd> dash</div>
       <div><kbd>E</kbd> pick up</div>
       <div><kbd>R</kbd> restart</div>
@@ -209,10 +209,8 @@ const sharedGeometries = {
   weaponTip: new THREE.ConeGeometry(0.14, 0.28, 4),
   rock: new THREE.DodecahedronGeometry(1, 0),
   treeTrunk: new THREE.CylinderGeometry(0.22, 0.34, 2.1, 6),
-  treeLeaves: new THREE.ConeGeometry(1.1, 2.1, 6),
   pickupPlatform: new THREE.CylinderGeometry(0.78, 0.92, 0.18, 10),
-  slashRing: new THREE.RingGeometry(0.42, 1, 20, 1, -0.55, 1.1),
-  wall: new THREE.BoxGeometry(8, 2.8, 0.7),
+  slashRing: new THREE.RingGeometry(0.42, 1, 16, 1, -0.55, 1.1),
 };
 
 const stoneMaterial = new THREE.MeshStandardMaterial({
@@ -241,11 +239,6 @@ const gripMaterial = new THREE.MeshStandardMaterial({
   color: 0x1e1814,
   roughness: 0.88,
   metalness: 0.05,
-});
-const leavesMaterial = new THREE.MeshStandardMaterial({
-  color: 0x2d6b45,
-  roughness: 0.82,
-  metalness: 0,
 });
 const stormMaterial = new THREE.MeshBasicMaterial({
   color: 0x5a4a8a,
@@ -331,6 +324,7 @@ let equippedWeapon = weapons[0];
 let equippedWeaponIndex = 0;
 let attackCooldown = 0;
 let attackTime = 0;
+let attackAnimDuration = 0.26;
 let dashCooldown = 0;
 let invulnerable = 0;
 let stormRadius = 78;
@@ -360,7 +354,9 @@ const hudCache = {
   chargeScale: -1,
 };
 
-const SLASH_POOL_SIZE = 3;
+const SLASH_POOL_SIZE = 2;
+const ENEMY_UPDATE_NEAR = 42;
+let tickFrame = 0;
 const slashPool: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[] = [];
 
 for (let index = 0; index < SLASH_POOL_SIZE; index += 1) {
@@ -422,11 +418,12 @@ function setPlayerFacingFromCamera(): void {
 }
 
 function beginAttackCharge(): void {
-  if (state !== "playing" || attackCooldown > 0 || isAttackKeyHeld) {
+  if (state !== "playing" || isAttackKeyHeld) {
     return;
   }
   isAttackKeyHeld = true;
   attackChargeTime = 0;
+  setPlayerFacingFromCamera();
 }
 
 function releaseAttackCharge(): void {
@@ -436,8 +433,8 @@ function releaseAttackCharge(): void {
   const charged = attackChargeTime >= ATTACK_CHARGE_TIME;
   isAttackKeyHeld = false;
   attackChargeTime = 0;
-  setPlayerFacingFromCamera();
-  performAttack(charged);
+  playAttackVisuals(charged);
+  applyAttackDamage(charged);
 }
 
 function createWeaponMesh(weapon: Weapon): THREE.Group {
@@ -550,7 +547,7 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
 }
 
 function addProps(): void {
-  const rockCount = 12;
+  const rockCount = 8;
   const rocks = new THREE.InstancedMesh(sharedGeometries.rock, stoneMaterial, rockCount);
   rocks.castShadow = false;
   rocks.receiveShadow = true;
@@ -571,46 +568,27 @@ function addProps(): void {
   rocks.instanceMatrix.needsUpdate = true;
   props.add(rocks);
 
-  const treeCount = 14;
+  const treeCount = 10;
   const trunks = new THREE.InstancedMesh(sharedGeometries.treeTrunk, woodMaterial, treeCount);
-  const leaves = new THREE.InstancedMesh(sharedGeometries.treeLeaves, leavesMaterial, treeCount);
   trunks.castShadow = false;
-  leaves.castShadow = false;
 
   for (let index = 0; index < treeCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
     const radius = 24 + Math.random() * 62;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
-    const scale = 0.85 + Math.random() * 0.35;
+    const scale = 0.9 + Math.random() * 0.3;
     const groundY = sampleTerrainHeight(x, z);
 
-    dummy.position.set(x, groundY + 1.05 * scale, z);
+    dummy.position.set(x, groundY + 1.15 * scale, z);
     dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
-    dummy.scale.setScalar(scale);
+    dummy.scale.set(scale, scale * 1.35, scale);
     dummy.updateMatrix();
     trunks.setMatrixAt(index, dummy.matrix);
-
-    dummy.position.set(x, groundY + 2.75 * scale, z);
-    dummy.updateMatrix();
-    leaves.setMatrixAt(index, dummy.matrix);
   }
   trunks.instanceMatrix.needsUpdate = true;
-  leaves.instanceMatrix.needsUpdate = true;
-  props.add(trunks, leaves);
+  props.add(trunks);
 
-  for (let index = 0; index < 4; index += 1) {
-    const angle = (index / 4) * Math.PI * 2;
-    const x = Math.cos(angle) * 18;
-    const z = Math.sin(angle) * 18;
-    const wall = new THREE.Mesh(sharedGeometries.wall, stoneMaterial);
-    const groundY = sampleTerrainHeight(x, z);
-    wall.position.set(x, groundY + 1.4, z);
-    wall.rotation.y = -angle;
-    wall.castShadow = false;
-    wall.receiveShadow = true;
-    props.add(wall);
-  }
 }
 
 function spawnMatch(): void {
@@ -646,15 +624,15 @@ function spawnMatch(): void {
 
   snapToGround(player);
 
-  for (let index = 0; index < 6; index += 1) {
-    const angle = (index / 6) * Math.PI * 2 + Math.random() * 0.35;
+  for (let index = 0; index < 5; index += 1) {
+    const angle = (index / 5) * Math.PI * 2 + Math.random() * 0.35;
     const radius = 19 + Math.random() * 36;
     enemies.push(
       createEnemy(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.94 + Math.random() * 0.18),
     );
   }
 
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < 6; index += 1) {
     const weapon = weapons[1 + Math.floor(Math.random() * (weapons.length - 1))];
     const angle = Math.random() * Math.PI * 2;
     const radius = 8 + Math.random() * 58;
@@ -672,7 +650,7 @@ function setState(nextState: GameState): void {
 function startMatch(): void {
   spawnMatch();
   setState("playing");
-  message.textContent = "Right-click the ground to move · Hold F to charge attack";
+  message.textContent = "Right-click to move · Hold A in front of you to charge";
   message.classList.remove("hidden");
 }
 
@@ -742,9 +720,22 @@ function spawnSlashEffect(
   slash.visible = true;
 }
 
-function performAttack(charged: boolean): void {
-  if (state !== "playing" || attackCooldown > 0) {
+function playAttackVisuals(charged: boolean): void {
+  if (state !== "playing") {
     return;
+  }
+
+  setPlayerFacingFromCamera();
+  const range = equippedWeapon.range * (charged ? CHARGED_RANGE_MULTIPLIER : 1);
+  attackAnimDuration = charged ? 0.38 : 0.26;
+  attackTime = attackAnimDuration;
+  spawnSlashEffect(player.position, playerDirection, range, charged);
+  cameraShakeDecay = Math.max(cameraShakeDecay, charged ? 0.28 : 0.12);
+}
+
+function applyAttackDamage(charged: boolean): boolean {
+  if (state !== "playing" || attackCooldown > 0) {
+    return false;
   }
 
   const range = equippedWeapon.range * (charged ? CHARGED_RANGE_MULTIPLIER : 1);
@@ -753,9 +744,6 @@ function performAttack(charged: boolean): void {
   const arc = equippedWeapon.arc * (charged ? 1.12 : 1);
 
   attackCooldown = equippedWeapon.cooldown * (charged ? 1.35 : 1);
-  attackTime = charged ? 0.32 : 0.22;
-  spawnSlashEffect(player.position, playerDirection, range, charged);
-  cameraShakeDecay = Math.max(cameraShakeDecay, charged ? 0.28 : 0.12);
 
   for (const enemy of enemies) {
     const offset = tempVector.copy(enemy.group.position).sub(player.position);
@@ -778,6 +766,8 @@ function performAttack(charged: boolean): void {
       removeEnemy(enemy);
     }
   }
+
+  return true;
 }
 
 function pickUpNearest(): void {
@@ -832,10 +822,25 @@ function updateMovement(delta: number): void {
 
   player.rotation.y = Math.atan2(playerDirection.x, playerDirection.z);
   snapToGround(player);
-  const swingDuration = attackTime > 0.28 ? 0.32 : 0.22;
-  const swing = attackTime > 0 ? Math.sin((attackTime / swingDuration) * Math.PI) : 0;
-  const chargeBoost = isAttackKeyHeld && attackChargeTime >= ATTACK_CHARGE_TIME ? 0.35 : 0;
-  animateHumanoid(playerHumanoid, moveSpeed, headBobPhase, swing + chargeBoost);
+  const swingPhase =
+    attackTime > 0 ? 1 - attackTime / Math.max(attackAnimDuration, 0.001) : 0;
+  const chargeRatio = THREE.MathUtils.clamp(attackChargeTime / ATTACK_CHARGE_TIME, 0, 1);
+  const chargedWindup =
+    isAttackKeyHeld && attackChargeTime >= ATTACK_CHARGE_TIME;
+
+  if (attackTime > 0 || isAttackKeyHeld) {
+    if (isAttackKeyHeld) {
+      setPlayerFacingFromCamera();
+    }
+    applyAttackPose(
+      playerHumanoid,
+      swingPhase,
+      isAttackKeyHeld ? chargeRatio : 0,
+      chargedWindup || (attackTime > 0 && attackAnimDuration > 0.3),
+    );
+  } else {
+    animateHumanoid(playerHumanoid, moveSpeed, headBobPhase, 0);
+  }
 
   if (dashCooldown > 0) {
     dashCooldown -= delta;
@@ -890,11 +895,16 @@ function updateCamera(delta: number): void {
 }
 
 function updateEnemies(delta: number): void {
+  const skipFarAi = tickFrame % 2 === 1;
+
   for (const enemy of enemies) {
     enemy.cooldown = Math.max(0, enemy.cooldown - delta);
     enemy.stun = Math.max(0, enemy.stun - delta);
 
     const distToPlayer = enemy.group.position.distanceTo(player.position);
+    if (skipFarAi && distToPlayer > ENEMY_UPDATE_NEAR) {
+      continue;
+    }
 
     const toPlayer = tempVector.copy(player.position).sub(enemy.group.position);
     toPlayer.y = 0;
@@ -921,7 +931,7 @@ function updateEnemies(delta: number): void {
     }
 
     snapToGround(enemy.group);
-    if (distToPlayer < 48) {
+    if (distToPlayer < 36 && moveSpeed > 0.05) {
       enemy.walkPhase += delta * (4.5 + moveSpeed * 0.55);
       animateHumanoid(enemy.humanoid, moveSpeed, enemy.walkPhase, 0);
     }
@@ -950,7 +960,13 @@ function updatePickups(delta: number): void {
     message.textContent = `Press E to pick up ${nearestPickup.weapon.name}`;
     message.classList.remove("hidden");
   } else if (state === "playing") {
-    message.textContent = "Right-click the ground to move · Hold F to charge attack";
+    if (isAttackKeyHeld && attackChargeTime >= ATTACK_CHARGE_TIME) {
+      message.textContent = "Charged — release A";
+    } else if (isAttackKeyHeld) {
+      message.textContent = "Charging slash ahead…";
+    } else {
+      message.textContent = "Right-click to move · Hold A to slash in front";
+    }
     message.classList.remove("hidden");
   }
 }
@@ -989,15 +1005,17 @@ function updateWeapon(delta: number): void {
   attackTime = Math.max(0, attackTime - delta);
   invulnerable = Math.max(0, invulnerable - delta);
 
-  if (isAttackKeyHeld && attackCooldown <= 0) {
+  if (isAttackKeyHeld) {
     attackChargeTime = Math.min(attackChargeTime + delta, ATTACK_CHARGE_TIME + 0.05);
+    setPlayerFacingFromCamera();
   }
 
-  const swingDuration = attackTime > 0.28 ? 0.32 : 0.22;
-  const swing = attackTime > 0 ? Math.sin((attackTime / swingDuration) * Math.PI) : 0;
+  const swingPhase =
+    attackTime > 0 ? 1 - attackTime / Math.max(attackAnimDuration, 0.001) : 0;
   const chargeRatio = THREE.MathUtils.clamp(attackChargeTime / ATTACK_CHARGE_TIME, 0, 1);
-  const chargeWindup = isAttackKeyHeld ? chargeRatio * 1.15 : 0;
-  playerWeapon.rotation.set(0.15, 0, -0.35 - swing * 0.55 - chargeWindup);
+  const weaponWindup = isAttackKeyHeld ? chargeRatio * 1.2 : 0;
+  const weaponSwing = attackTime > 0 ? Math.sin(swingPhase * Math.PI) : 0;
+  playerWeapon.rotation.set(0.15, 0.1, -0.35 - weaponSwing * 0.85 - weaponWindup);
 
   const flashing = invulnerable > 0 && Math.sin(clock.elapsedTime * 34) > 0;
   setHumanoidFlash(playerHumanoid, playerPalette, flashing);
@@ -1048,18 +1066,26 @@ function updateHud(): void {
 
 function tick(): void {
   const delta = Math.min(clock.getDelta(), 0.033);
+  tickFrame += 1;
 
   if (state === "playing") {
     updateMovement(delta);
-    updateEnemies(delta);
-    updatePickups(delta);
-    updateStorm(delta);
     updateWeapon(delta);
+    updateEnemies(delta);
+    if (tickFrame % 2 === 0) {
+      updatePickups(delta);
+    }
+    updateStorm(delta);
   }
 
-  updateSlashEffects(delta);
-  updateCamera(delta);
-  updateHud();
+  if (tickFrame % 2 === 0) {
+    updateSlashEffects(delta);
+    updateCamera(delta);
+    updateHud();
+  } else if (state === "playing") {
+    updateCamera(delta);
+  }
+
   renderer.render(scene, camera);
 }
 
@@ -1078,7 +1104,7 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
     dash();
   }
-  if (event.code === "KeyF") {
+  if (event.code === "KeyA") {
     event.preventDefault();
     beginAttackCharge();
   }
@@ -1091,7 +1117,7 @@ window.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("keyup", (event) => {
-  if (event.code === "KeyF") {
+  if (event.code === "KeyA") {
     releaseAttackCharge();
   }
 });
