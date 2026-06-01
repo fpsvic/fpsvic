@@ -49,7 +49,7 @@ export function createGroundTexture(): THREE.CanvasTexture {
 }
 
 export function addSkyDome(scene: THREE.Scene): void {
-  const geometry = new THREE.SphereGeometry(240, 14, 7);
+  const geometry = new THREE.SphereGeometry(240, 10, 5);
   const colors = new Float32Array(geometry.attributes.position.count * 3);
   const top = new THREE.Color(0x4f7eb8);
   const horizon = new THREE.Color(0x9eb8d4);

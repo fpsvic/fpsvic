@@ -12,6 +12,19 @@ import { createArenaTerrain, sampleTerrainHeight } from "./terrain";
 import "./styles.css";
 
 const ARENA_RADIUS = 90;
+
+type GameSession = {
+  initialized: boolean;
+  state: GameState;
+};
+
+function getSession(): GameSession {
+  const root = window as Window & { __bladeArenaSession?: GameSession };
+  if (!root.__bladeArenaSession) {
+    root.__bladeArenaSession = { initialized: false, state: "start" };
+  }
+  return root.__bladeArenaSession;
+}
 const ATTACK_CHARGE_TIME = 2;
 const CHARGED_DAMAGE_MULTIPLIER = 2.85;
 const CHARGED_RANGE_MULTIPLIER = 1.22;
@@ -118,7 +131,7 @@ const renderer = new THREE.WebGLRenderer({
   powerPreference: "high-performance",
 });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.1));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
 configureRenderer(renderer);
 app.appendChild(renderer.domElement);
 
@@ -204,8 +217,7 @@ const slashEffects = new THREE.Group();
 scene.add(world, props, enemiesGroup, pickupsGroup, slashEffects);
 
 const sharedGeometries = {
-  stormRing: new THREE.RingGeometry(1, 1.8, 28),
-  safeRing: new THREE.RingGeometry(1, 1.08, 28),
+  stormRing: new THREE.RingGeometry(1, 1.8, 24),
   weaponHandle: new THREE.CylinderGeometry(0.055, 0.075, 1, 8),
   weaponBlade: new THREE.BoxGeometry(1, 0.1, 0.16),
   weaponTip: new THREE.ConeGeometry(0.14, 0.28, 4),
@@ -256,14 +268,6 @@ const stormMaterial = new THREE.MeshBasicMaterial({
   depthWrite: false,
   blending: THREE.AdditiveBlending,
 });
-const safeZoneMaterial = new THREE.MeshBasicMaterial({
-  color: 0x5ec8ff,
-  transparent: true,
-  opacity: 0.12,
-  side: THREE.DoubleSide,
-  depthWrite: false,
-});
-
 const weaponBladeMaterials = weapons.map(
   (weapon) =>
     new THREE.MeshStandardMaterial({
@@ -302,11 +306,6 @@ stormRing.rotation.x = -Math.PI / 2;
 stormRing.position.y = 0.09;
 scene.add(stormRing);
 
-const safeRing = new THREE.Mesh(sharedGeometries.safeRing, safeZoneMaterial);
-safeRing.rotation.x = -Math.PI / 2;
-safeRing.position.y = 0.12;
-scene.add(safeRing);
-
 const player = new THREE.Group();
 scene.add(player);
 
@@ -327,7 +326,7 @@ const playerVelocity = new THREE.Vector3();
 const cameraShake = new THREE.Vector3();
 const dummy = new THREE.Object3D();
 
-let state: GameState = "start";
+let state: GameState = getSession().state;
 let playerHealth = 100;
 let score = 0;
 let equippedWeapon = weapons[0];
@@ -542,11 +541,14 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
   platform.castShadow = false;
   group.add(platform);
 
-  const weaponMesh = createWeaponMesh(weapon);
-  weaponMesh.position.y = 0.42;
-  weaponMesh.rotation.z = 0.65;
-  weaponMesh.scale.setScalar(0.9);
-  group.add(weaponMesh);
+  const pickupBlade = new THREE.Mesh(
+    sharedGeometries.weaponBlade,
+    weaponBladeMaterials[weaponIndex] ?? weaponBladeMaterials[0],
+  );
+  pickupBlade.scale.set(weapon.bladeLength * 0.85, 1, 1);
+  pickupBlade.position.y = 0.42;
+  pickupBlade.rotation.z = 0.65;
+  group.add(pickupBlade);
 
   const pickup = {
     group,
@@ -636,15 +638,15 @@ function spawnMatch(): void {
 
   snapToGround(player);
 
-  for (let index = 0; index < 4; index += 1) {
-    const angle = (index / 4) * Math.PI * 2 + Math.random() * 0.35;
+  for (let index = 0; index < 3; index += 1) {
+    const angle = (index / 3) * Math.PI * 2 + Math.random() * 0.35;
     const radius = 19 + Math.random() * 36;
     enemies.push(
       createEnemy(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.94 + Math.random() * 0.18),
     );
   }
 
-  for (let index = 0; index < 5; index += 1) {
+  for (let index = 0; index < 4; index += 1) {
     const weapon = weapons[1 + Math.floor(Math.random() * (weapons.length - 1))];
     const angle = Math.random() * Math.PI * 2;
     const radius = 8 + Math.random() * 58;
@@ -654,12 +656,24 @@ function spawnMatch(): void {
 
 function setState(nextState: GameState): void {
   state = nextState;
-  startPanel.classList.toggle("hidden", nextState !== "start");
-  endPanel.classList.toggle("hidden", nextState !== "ended");
-  message.classList.toggle("hidden", nextState !== "playing");
+  getSession().state = nextState;
+
+  const showStart = nextState === "start";
+  const showEnd = nextState === "ended";
+  const showMessage = nextState === "playing";
+
+  startPanel.classList.toggle("hidden", !showStart);
+  startPanel.toggleAttribute("inert", !showStart);
+  endPanel.classList.toggle("hidden", !showEnd);
+  endPanel.toggleAttribute("inert", !showEnd);
+  message.classList.toggle("hidden", !showMessage);
 }
 
 function startMatch(): void {
+  if (state === "playing") {
+    return;
+  }
+
   spawnMatch();
   setState("playing");
   message.textContent = "Right-click to move · Hold A in front of you to charge";
@@ -907,14 +921,12 @@ function updateCamera(delta: number): void {
 }
 
 function updateEnemies(delta: number): void {
-  const skipFarAi = tickFrame % 2 === 1;
-
   for (const enemy of enemies) {
     enemy.cooldown = Math.max(0, enemy.cooldown - delta);
     enemy.stun = Math.max(0, enemy.stun - delta);
 
     const distToPlayer = enemy.group.position.distanceTo(player.position);
-    if (skipFarAi && distToPlayer > ENEMY_UPDATE_NEAR) {
+    if (distToPlayer > ENEMY_UPDATE_NEAR && tickFrame % 3 !== 0) {
       continue;
     }
 
@@ -987,7 +999,6 @@ function updateStorm(delta: number): void {
   stormTimer += delta;
   stormRadius = Math.max(22, 78 - stormTimer * 0.18);
   stormRing.scale.setScalar(stormRadius);
-  safeRing.scale.setScalar(stormRadius - 1.8);
 
   const distance = Math.hypot(player.position.x, player.position.z);
   if (distance > stormRadius) {
@@ -1088,18 +1099,17 @@ function tick(): void {
     updateMovement(delta);
     updateWeapon(delta);
     updateEnemies(delta);
-    if (tickFrame % 2 === 0) {
+    if (tickFrame % 3 === 0) {
       updatePickups(delta);
     }
     updateStorm(delta);
   }
 
-  if (tickFrame % 2 === 0) {
-    updateSlashEffects(delta);
-    updateCamera(delta);
+  updateSlashEffects(delta);
+  updateCamera(delta);
+
+  if (tickFrame % 3 === 0) {
     updateHud();
-  } else if (state === "playing") {
-    updateCamera(delta);
   }
 
   renderer.render(scene, camera);
@@ -1200,12 +1210,34 @@ window.addEventListener("mousemove", (event) => {
   cameraPitch -= event.movementY * 0.0014;
 });
 
-startButton.addEventListener("click", startMatch);
-restartButton.addEventListener("click", startMatch);
+function handleStartClick(event: MouseEvent): void {
+  event.stopPropagation();
+  event.preventDefault();
+  startMatch();
+}
 
-addProps();
-snapToGround(player);
-equipWeapon(equippedWeapon);
-setState("start");
+startButton.addEventListener("click", handleStartClick);
+restartButton.addEventListener("click", handleStartClick);
+
+function bootGame(): void {
+  const session = getSession();
+
+  if (!session.initialized) {
+    session.initialized = true;
+    session.state = "start";
+    addProps();
+    snapToGround(player);
+    equipWeapon(equippedWeapon);
+    setState("start");
+    return;
+  }
+
+  if (session.state === "playing") {
+    spawnMatch();
+  }
+  setState(session.state);
+}
+
+bootGame();
 updateCamera(1);
 renderer.setAnimationLoop(tick);
