@@ -302,6 +302,8 @@ let stormTimer = 0;
 let cameraYaw = Math.PI;
 let cameraPitch = 0.52;
 let nearestPickup: Pickup | null = null;
+let isCanvasAiming = false;
+let useDragAim = false;
 
 const enemies: Enemy[] = [];
 const pickups: Pickup[] = [];
@@ -604,12 +606,26 @@ function setState(nextState: GameState): void {
   message.classList.toggle("hidden", nextState !== "playing");
 }
 
+function isPointerLocked(): boolean {
+  return document.pointerLockElement === renderer.domElement;
+}
+
+function requestGamePointerLock(): void {
+  renderer.domElement.requestPointerLock().catch(() => {
+    useDragAim = true;
+    message.textContent = "Drag on the arena to aim";
+    message.classList.remove("hidden");
+  });
+}
+
 function startMatch(): void {
   spawnMatch();
   setState("playing");
-  renderer.domElement.requestPointerLock().catch(() => {
-    message.textContent = "Click the arena to lock aim";
-  });
+  useDragAim = false;
+  isCanvasAiming = false;
+  message.textContent = "Click or drag the arena to aim · WASD to move";
+  message.classList.remove("hidden");
+  requestGamePointerLock();
 }
 
 function endMatch(won: boolean): void {
@@ -826,8 +842,16 @@ function updatePickups(delta: number): void {
     message.textContent = `Press E to pick up ${nearestPickup.weapon.name}`;
     message.classList.remove("hidden");
   } else if (state === "playing") {
-    message.textContent = "Outlast the arena";
-    message.classList.toggle("hidden", document.pointerLockElement === renderer.domElement);
+    if (useDragAim && !isCanvasAiming) {
+      message.textContent = "Drag on the arena to aim";
+      message.classList.remove("hidden");
+    } else if (isPointerLocked()) {
+      message.textContent = "Outlast the arena";
+      message.classList.add("hidden");
+    } else {
+      message.textContent = "Click or drag the arena to aim";
+      message.classList.remove("hidden");
+    }
   }
 }
 
@@ -958,32 +982,56 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("keyup", (event) => {
   keys.delete(event.code);
 });
+function applyMouseLook(movementX: number, movementY: number): void {
+  cameraYaw -= movementX * 0.0024;
+  cameraPitch -= movementY * 0.0016;
+}
+
 window.addEventListener("mousemove", (event) => {
-  if (document.pointerLockElement !== renderer.domElement) {
+  if (!isPointerLocked()) {
     return;
   }
   pointer.x += event.movementX;
   pointer.y += event.movementY;
-  cameraYaw -= event.movementX * 0.0024;
-  cameraPitch -= event.movementY * 0.0016;
-});
-window.addEventListener("mousedown", (event) => {
-  if (event.button !== 0) {
-    return;
-  }
-  if (state === "playing") {
-    if (document.pointerLockElement !== renderer.domElement) {
-      renderer.domElement.requestPointerLock().catch(() => undefined);
-    }
-    attack();
-  }
+  applyMouseLook(event.movementX, event.movementY);
 });
 
-startButton.addEventListener("click", startMatch);
-restartButton.addEventListener("click", startMatch);
+window.addEventListener("mouseup", () => {
+  isCanvasAiming = false;
+});
+
+renderer.domElement.addEventListener("mousemove", (event) => {
+  if (state !== "playing" || isPointerLocked()) {
+    return;
+  }
+  if (!isCanvasAiming && !useDragAim) {
+    return;
+  }
+  applyMouseLook(event.movementX, event.movementY);
+});
+
+renderer.domElement.addEventListener("mousedown", (event) => {
+  if (state !== "playing" || event.button !== 0) {
+    return;
+  }
+  isCanvasAiming = true;
+  if (!isPointerLocked()) {
+    requestGamePointerLock();
+  }
+  attack();
+});
+
+startButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  startMatch();
+});
+restartButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  startMatch();
+});
 renderer.domElement.addEventListener("click", () => {
-  if (state === "playing" && document.pointerLockElement !== renderer.domElement) {
-    renderer.domElement.requestPointerLock().catch(() => undefined);
+  if (state === "playing" && !isPointerLocked()) {
+    requestGamePointerLock();
   }
 });
 

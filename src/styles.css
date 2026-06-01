@@ -18,7 +18,11 @@ body {
 }
 
 #app {
+  position: relative;
+  width: 100%;
   min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .hud {
@@ -212,4 +216,7 @@ body {
 
 canvas {
   display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
 }
