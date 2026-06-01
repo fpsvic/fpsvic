@@ -1,6 +1,6 @@
 # Blade Drop Arena
 
-A browser-based 3D melee battle arena prototype built with Vite, TypeScript, and Three.js.
+A browser-based 3D melee battle arena built with Vite, TypeScript, and Three.js. Uses tuned lighting, ACES tone mapping, and instanced environment props for smoother play on typical hardware.
 
 ## Features
 
