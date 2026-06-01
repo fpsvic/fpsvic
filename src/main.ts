@@ -8,10 +8,9 @@ import {
 } from "./humanoid";
 import { addSkyDome, configureRenderer, setupLighting } from "./graphics";
 import { animateLightFighter, createLightFighter, type LightFighter } from "./lightFighter";
-import { createArenaTerrain, sampleTerrainHeight } from "./terrain";
+import { ArenaMinimap } from "./minimap";
+import { ARENA_RADIUS, createArenaTerrain, sampleTerrainHeight } from "./terrain";
 import "./styles.css";
-
-const ARENA_RADIUS = 90;
 
 type GameSession = {
   initialized: boolean;
@@ -121,7 +120,7 @@ const camera = new THREE.PerspectiveCamera(
   58,
   window.innerWidth / window.innerHeight,
   0.1,
-  320,
+  200,
 );
 const renderer = new THREE.WebGLRenderer({
   antialias: false,
@@ -164,6 +163,11 @@ hud.innerHTML = `
       <div><kbd>E</kbd> pick up</div>
       <div><kbd>R</kbd> restart</div>
     </div>
+  </div>
+
+  <div class="minimap-panel hidden" data-minimap-panel>
+    <span class="minimap-panel__label">Map</span>
+    <canvas class="minimap-panel__canvas" data-minimap width="96" height="96" aria-label="Arena map"></canvas>
   </div>
 
   <div class="center-message hidden" data-message></div>
@@ -232,6 +236,9 @@ const endTitle = requireHudElement<HTMLElement>("[data-end-title]");
 const endCopy = requireHudElement<HTMLElement>("[data-end-copy]");
 const startButton = requireHudElement<HTMLButtonElement>("[data-start-button]");
 const restartButton = requireHudElement<HTMLButtonElement>("[data-restart-button]");
+const minimapPanel = requireHudElement<HTMLElement>("[data-minimap-panel]");
+const minimapCanvas = requireHudElement<HTMLCanvasElement>("[data-minimap]");
+const arenaMinimap = new ArenaMinimap(minimapCanvas, ARENA_RADIUS);
 
 const clock = new THREE.Clock();
 const world = new THREE.Group();
@@ -561,7 +568,7 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
 }
 
 function addProps(): void {
-  const rockCount = 4;
+  const rockCount = 3;
   const rocks = new THREE.InstancedMesh(sharedGeometries.rock, stoneMaterial, rockCount);
 
   for (let index = 0; index < rockCount; index += 1) {
@@ -580,7 +587,7 @@ function addProps(): void {
   rocks.instanceMatrix.needsUpdate = true;
   props.add(rocks);
 
-  const treeCount = 5;
+  const treeCount = 4;
   const trees = new THREE.InstancedMesh(sharedGeometries.tree, treeMaterial, treeCount);
 
   for (let index = 0; index < treeCount; index += 1) {
@@ -657,12 +664,14 @@ function setState(nextState: GameState): void {
   const showStart = nextState === "start";
   const showEnd = nextState === "ended";
   const showMessage = nextState === "playing";
+  const showMinimap = nextState === "playing";
 
   startPanel.classList.toggle("hidden", !showStart);
   startPanel.toggleAttribute("inert", !showStart);
   endPanel.classList.toggle("hidden", !showEnd);
   endPanel.toggleAttribute("inert", !showEnd);
   message.classList.toggle("hidden", !showMessage);
+  minimapPanel.classList.toggle("hidden", !showMinimap);
 }
 
 function startMatch(): void {
@@ -672,6 +681,7 @@ function startMatch(): void {
 
   spawnMatch();
   setState("playing");
+  updateMinimap();
   message.textContent = "Right-click to move · Hold A in front of you to charge";
   message.classList.remove("hidden");
 }
@@ -922,7 +932,7 @@ function updateEnemies(delta: number): void {
     enemy.stun = Math.max(0, enemy.stun - delta);
 
     const distToPlayer = enemy.group.position.distanceTo(player.position);
-    if (distToPlayer > ENEMY_UPDATE_NEAR && tickFrame % 3 !== 0) {
+    if (distToPlayer > ENEMY_UPDATE_NEAR && tickFrame % 4 !== 0) {
       continue;
     }
 
@@ -1036,8 +1046,25 @@ function updateWeapon(delta: number): void {
   const weaponSwing = attackTime > 0 ? Math.sin(swingPhase * Math.PI) : 0;
   playerWeapon.rotation.set(0.15, 0.1, -0.35 - weaponSwing * 0.85 - weaponWindup);
 
-  const flashing = invulnerable > 0 && Math.sin(clock.elapsedTime * 34) > 0;
+  const flashing =
+    invulnerable > 0 && tickFrame % 2 === 0 && Math.sin(clock.elapsedTime * 34) > 0;
   setHumanoidFlash(playerHumanoid, playerPalette, flashing);
+}
+
+function updateMinimap(): void {
+  arenaMinimap.draw({
+    playerX: player.position.x,
+    playerZ: player.position.z,
+    playerYaw: player.rotation.y,
+    stormRadius,
+    enemies: enemies.map((enemy) => ({
+      x: enemy.group.position.x,
+      z: enemy.group.position.z,
+    })),
+    moveTargetX: moveTarget.x,
+    moveTargetZ: moveTarget.z,
+    hasMoveTarget,
+  });
 }
 
 function updateHud(): void {
@@ -1099,8 +1126,11 @@ function tick(): void {
     updateStorm(delta);
     if (tickFrame % 4 === 0) {
       updatePickups(delta);
+      updateMinimap();
     }
-    updateSlashEffects(delta);
+    if (attackTime > 0) {
+      updateSlashEffects(delta);
+    }
     updateCamera(delta);
     if (tickFrame % 3 === 0) {
       updateHud();

@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { createGroundColorTexture } from "./graphics";
 
-const ARENA_RADIUS = 90;
+export const ARENA_RADIUS = 90;
 const TERRAIN_SIZE = 184;
 const TERRAIN_SEGMENTS = 8;
 const HEIGHT_CACHE_STEP = 2;

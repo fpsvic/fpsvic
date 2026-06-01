@@ -14,7 +14,7 @@ export function createGroundColorTexture(): THREE.CanvasTexture {
     return groundColorTexture;
   }
 
-  const size = 256;
+  const size = 128;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
