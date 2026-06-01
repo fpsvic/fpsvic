@@ -1,10 +1,13 @@
 import * as THREE from "three";
+import { createGroundTexture } from "./graphics";
 
 const ARENA_RADIUS = 90;
 const TERRAIN_SIZE = 184;
-const TERRAIN_SEGMENTS = 16;
+const TERRAIN_SEGMENTS = 12;
 const HEIGHT_CACHE_STEP = 2;
 const heightCache = new Map<number, number>();
+
+let groundTexture: THREE.CanvasTexture | null = null;
 
 function heightCacheKey(x: number, z: number): number {
   const qx = Math.round(x / HEIGHT_CACHE_STEP);
@@ -37,7 +40,7 @@ function fbm(x: number, z: number): number {
   let sum = 0;
   let amp = 0.55;
   let freq = 0.045;
-  for (let octave = 0; octave < 4; octave += 1) {
+  for (let octave = 0; octave < 3; octave += 1) {
     sum += noise2(x * freq, z * freq) * amp;
     freq *= 2.05;
     amp *= 0.5;
@@ -58,9 +61,9 @@ export function sampleTerrainHeight(x: number, z: number): number {
   }
 
   const macro = fbm(x, z);
-  const detail = noise2(x * 0.22, z * 0.22) * 0.22;
+  const detail = noise2(x * 0.22, z * 0.22) * 0.18;
   const ridge = Math.pow(Math.max(0, 1 - dist / ARENA_RADIUS), 1.35) * 1.1;
-  let height = macro * 2.4 + detail + ridge * 0.35;
+  let height = macro * 2.35 + detail + ridge * 0.32;
 
   const centerBlend = THREE.MathUtils.smoothstep(dist, 8, 26);
   height *= THREE.MathUtils.lerp(0.35, 1, centerBlend);
@@ -71,10 +74,6 @@ export function sampleTerrainHeight(x: number, z: number): number {
   const result = Math.max(0, height);
   heightCache.set(key, result);
   return result;
-}
-
-export function clearTerrainHeightCache(): void {
-  heightCache.clear();
 }
 
 function buildTerrainGeometry(): THREE.BufferGeometry {
@@ -97,16 +96,15 @@ function buildTerrainGeometry(): THREE.BufferGeometry {
     positions.setY(index, height);
 
     const dist = Math.hypot(x, z);
-    const slope = Math.min(1, Math.abs(height - sampleTerrainHeight(x + 2, z)) * 0.45);
-    const grass = new THREE.Color(0x3f6b42).lerp(new THREE.Color(0x5f8f52), height * 0.35);
-    const dirt = new THREE.Color(0x8a7355).lerp(new THREE.Color(0x6f5a42), slope);
-    const path = new THREE.Color(0xb39a72);
+    const grass = new THREE.Color(0x4a7a48).lerp(new THREE.Color(0x6fa862), height * 0.4);
+    const dirt = new THREE.Color(0x8f7658);
+    const path = new THREE.Color(0xc4aa7a);
     const pathMask = THREE.MathUtils.smoothstep(dist, 4, 20) * (1 - THREE.MathUtils.smoothstep(dist, 20, 34));
-    const dirtMask = THREE.MathUtils.clamp(slope * 1.6 + height * 0.12, 0, 1);
+    const heightTint = THREE.MathUtils.clamp(height * 0.15, 0, 0.35);
 
     color.copy(grass);
-    color.lerp(dirt, dirtMask);
-    color.lerp(path, pathMask * 0.85);
+    color.lerp(dirt, heightTint);
+    color.lerp(path, pathMask * 0.9);
 
     colors[index * 3] = color.r;
     colors[index * 3 + 1] = color.g;
@@ -124,16 +122,18 @@ export type ArenaTerrain = {
 };
 
 export function createArenaTerrain(): ArenaTerrain {
-  const material = new THREE.MeshStandardMaterial({
+  if (!groundTexture) {
+    groundTexture = createGroundTexture();
+  }
+
+  const material = new THREE.MeshLambertMaterial({
+    map: groundTexture,
     vertexColors: true,
-    roughness: 0.94,
-    metalness: 0.02,
-    flatShading: false,
   });
 
   const mesh = new THREE.Mesh(buildTerrainGeometry(), material);
-  mesh.receiveShadow = true;
   mesh.castShadow = false;
+  mesh.receiveShadow = false;
 
   return { mesh, radius: ARENA_RADIUS };
 }

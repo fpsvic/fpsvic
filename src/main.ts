@@ -5,8 +5,9 @@ import {
   createHumanoid,
   setHumanoidFlash,
   type HumanoidPalette,
-  type HumanoidRig,
 } from "./humanoid";
+import { addSkyDome, configureRenderer, setupLighting } from "./graphics";
+import { animateLightFighter, createLightFighter, type LightFighter } from "./lightFighter";
 import { createArenaTerrain, sampleTerrainHeight } from "./terrain";
 import "./styles.css";
 
@@ -32,7 +33,7 @@ type Weapon = {
 
 type Enemy = {
   group: THREE.Group;
-  humanoid: HumanoidRig;
+  fighter: LightFighter;
   walkPhase: number;
   health: number;
   maxHealth: number;
@@ -102,9 +103,9 @@ const weapons: Weapon[] = [
 ];
 
 const scene = new THREE.Scene();
-const horizonColor = new THREE.Color(0xa8c0d8);
+const horizonColor = new THREE.Color(0x9eb8d4);
 scene.background = horizonColor.clone();
-scene.fog = new THREE.Fog(horizonColor.getHex(), 42, 130);
+scene.fog = new THREE.FogExp2(horizonColor.getHex(), 0.0085);
 
 const camera = new THREE.PerspectiveCamera(
   58,
@@ -117,11 +118,12 @@ const renderer = new THREE.WebGLRenderer({
   powerPreference: "high-performance",
 });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.NoToneMapping;
-renderer.shadowMap.enabled = false;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.1));
+configureRenderer(renderer);
 app.appendChild(renderer.domElement);
+
+addSkyDome(scene);
+setupLighting(scene);
 
 const hud = document.createElement("div");
 hud.className = "hud";
@@ -202,8 +204,8 @@ const slashEffects = new THREE.Group();
 scene.add(world, props, enemiesGroup, pickupsGroup, slashEffects);
 
 const sharedGeometries = {
-  stormRing: new THREE.RingGeometry(1, 1.8, 40),
-  safeRing: new THREE.RingGeometry(1, 1.08, 40),
+  stormRing: new THREE.RingGeometry(1, 1.8, 28),
+  safeRing: new THREE.RingGeometry(1, 1.08, 28),
   weaponHandle: new THREE.CylinderGeometry(0.055, 0.075, 1, 8),
   weaponBlade: new THREE.BoxGeometry(1, 0.1, 0.16),
   weaponTip: new THREE.ConeGeometry(0.14, 0.28, 4),
@@ -224,10 +226,16 @@ const woodMaterial = new THREE.MeshStandardMaterial({
   metalness: 0.02,
 });
 const playerPalette: HumanoidPalette = {
-  skin: new THREE.MeshStandardMaterial({ color: 0xd4a882, roughness: 0.76, metalness: 0.02 }),
-  shirt: new THREE.MeshStandardMaterial({ color: 0x3d4f5c, roughness: 0.82, metalness: 0.12 }),
-  pants: new THREE.MeshStandardMaterial({ color: 0x2a3238, roughness: 0.9, metalness: 0.04 }),
-  boots: new THREE.MeshStandardMaterial({ color: 0x1e1814, roughness: 0.88, metalness: 0.08 }),
+  skin: new THREE.MeshStandardMaterial({ color: 0xe0b48e, roughness: 0.72, metalness: 0.02 }),
+  shirt: new THREE.MeshStandardMaterial({
+    color: 0x4a6270,
+    roughness: 0.78,
+    metalness: 0.18,
+    emissive: new THREE.Color(0x1a2830),
+    emissiveIntensity: 0.08,
+  }),
+  pants: new THREE.MeshStandardMaterial({ color: 0x2e3840, roughness: 0.9, metalness: 0.06 }),
+  boots: new THREE.MeshStandardMaterial({ color: 0x1a1410, roughness: 0.88, metalness: 0.1 }),
 };
 const enemyPalette: HumanoidPalette = {
   skin: new THREE.MeshStandardMaterial({ color: 0xc9a07e, roughness: 0.78, metalness: 0.02 }),
@@ -241,16 +249,17 @@ const gripMaterial = new THREE.MeshStandardMaterial({
   metalness: 0.05,
 });
 const stormMaterial = new THREE.MeshBasicMaterial({
-  color: 0x5a4a8a,
+  color: 0x7a5ad8,
   transparent: true,
-  opacity: 0.14,
+  opacity: 0.2,
   side: THREE.DoubleSide,
   depthWrite: false,
+  blending: THREE.AdditiveBlending,
 });
 const safeZoneMaterial = new THREE.MeshBasicMaterial({
-  color: 0x6a9ab8,
+  color: 0x5ec8ff,
   transparent: true,
-  opacity: 0.22,
+  opacity: 0.12,
   side: THREE.DoubleSide,
   depthWrite: false,
 });
@@ -259,28 +268,29 @@ const weaponBladeMaterials = weapons.map(
   (weapon) =>
     new THREE.MeshStandardMaterial({
       color: weapon.color,
-      roughness: 0.35,
-      metalness: 0.82,
+      roughness: 0.28,
+      metalness: 0.88,
+      emissive: new THREE.Color(weapon.color),
+      emissiveIntensity: 0.12,
     }),
 );
 
-const ambientLight = new THREE.HemisphereLight(0xc8dff5, 0x3a4a32, 0.72);
-scene.add(ambientLight);
-
-const sun = new THREE.DirectionalLight(0xfff2dd, 1.35);
-sun.position.set(42, 58, 24);
-scene.add(sun);
+const enemyFighterMaterials = {
+  body: enemyPalette.shirt,
+  head: enemyPalette.skin,
+};
 
 const arenaTerrain = createArenaTerrain();
 world.add(arenaTerrain.mesh);
 
 const moveMarker = new THREE.Mesh(
-  new THREE.RingGeometry(0.32, 0.52, 12),
+  new THREE.RingGeometry(0.32, 0.52, 16),
   new THREE.MeshBasicMaterial({
-    color: 0x7ec8ff,
+    color: 0x9ee8ff,
     transparent: true,
-    opacity: 0.75,
+    opacity: 0.85,
     depthWrite: false,
+    blending: THREE.AdditiveBlending,
   }),
 );
 moveMarker.rotation.x = -Math.PI / 2;
@@ -357,15 +367,17 @@ const hudCache = {
 const SLASH_POOL_SIZE = 2;
 const ENEMY_UPDATE_NEAR = 42;
 let tickFrame = 0;
+let isPageVisible = true;
 const slashPool: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[] = [];
 
 for (let index = 0; index < SLASH_POOL_SIZE; index += 1) {
   const slashMaterial = new THREE.MeshBasicMaterial({
     color: 0xffffff,
     transparent: true,
-    opacity: 0.55,
+    opacity: 0.65,
     side: THREE.DoubleSide,
     depthWrite: false,
+    blending: THREE.AdditiveBlending,
   });
   const slash = new THREE.Mesh(sharedGeometries.slashRing, slashMaterial);
   slash.visible = false;
@@ -492,21 +504,21 @@ function createEnemy(x: number, z: number, scale = 1): Enemy {
   group.position.set(x, 0, z);
   snapToGround(group);
 
-  const humanoid = createHumanoid(enemyPalette, scale, false);
-  group.add(humanoid.root);
+  const fighter = createLightFighter(enemyFighterMaterials, scale);
+  group.add(fighter.root);
 
   const bladeMaterial = weaponBladeMaterials[Math.floor(Math.random() * weapons.length)];
   const blade = new THREE.Mesh(sharedGeometries.weaponBlade, bladeMaterial);
-  blade.scale.set(0.75 * scale, 1, 1);
-  blade.rotation.z = 0.2;
-  blade.castShadow = false;
-  humanoid.weaponMount.add(blade);
+  blade.scale.set(0.7 * scale, 1, 1);
+  blade.position.set(0.42 * scale, 1.05 * scale, 0.08);
+  blade.rotation.z = 0.25;
+  group.add(blade);
 
   enemiesGroup.add(group);
 
   return {
     group,
-    humanoid,
+    fighter,
     walkPhase: Math.random() * Math.PI * 2,
     health: 80 + scale * 20,
     maxHealth: 80 + scale * 20,
@@ -547,7 +559,7 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
 }
 
 function addProps(): void {
-  const rockCount = 8;
+  const rockCount = 6;
   const rocks = new THREE.InstancedMesh(sharedGeometries.rock, stoneMaterial, rockCount);
   rocks.castShadow = false;
   rocks.receiveShadow = true;
@@ -568,7 +580,7 @@ function addProps(): void {
   rocks.instanceMatrix.needsUpdate = true;
   props.add(rocks);
 
-  const treeCount = 10;
+  const treeCount = 8;
   const trunks = new THREE.InstancedMesh(sharedGeometries.treeTrunk, woodMaterial, treeCount);
   trunks.castShadow = false;
 
@@ -624,15 +636,15 @@ function spawnMatch(): void {
 
   snapToGround(player);
 
-  for (let index = 0; index < 5; index += 1) {
-    const angle = (index / 5) * Math.PI * 2 + Math.random() * 0.35;
+  for (let index = 0; index < 4; index += 1) {
+    const angle = (index / 4) * Math.PI * 2 + Math.random() * 0.35;
     const radius = 19 + Math.random() * 36;
     enemies.push(
       createEnemy(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.94 + Math.random() * 0.18),
     );
   }
 
-  for (let index = 0; index < 6; index += 1) {
+  for (let index = 0; index < 5; index += 1) {
     const weapon = weapons[1 + Math.floor(Math.random() * (weapons.length - 1))];
     const angle = Math.random() * Math.PI * 2;
     const radius = 8 + Math.random() * 58;
@@ -931,9 +943,9 @@ function updateEnemies(delta: number): void {
     }
 
     snapToGround(enemy.group);
-    if (distToPlayer < 36 && moveSpeed > 0.05) {
+    if (distToPlayer < 40 && moveSpeed > 0.05) {
       enemy.walkPhase += delta * (4.5 + moveSpeed * 0.55);
-      animateHumanoid(enemy.humanoid, moveSpeed, enemy.walkPhase, 0);
+      animateLightFighter(enemy.fighter, moveSpeed, enemy.walkPhase);
     }
   }
 }
@@ -1065,6 +1077,10 @@ function updateHud(): void {
 }
 
 function tick(): void {
+  if (!isPageVisible) {
+    return;
+  }
+
   const delta = Math.min(clock.getDelta(), 0.033);
   tickFrame += 1;
 
@@ -1096,6 +1112,9 @@ function resize(): void {
 }
 
 window.addEventListener("resize", resize);
+document.addEventListener("visibilitychange", () => {
+  isPageVisible = document.visibilityState === "visible";
+});
 window.addEventListener("keydown", (event) => {
   if (event.repeat) {
     return;

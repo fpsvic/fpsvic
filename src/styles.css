@@ -18,7 +18,23 @@ body {
 }
 
 #app {
+  position: relative;
   min-height: 100vh;
+}
+
+#app::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 45%, rgb(0 0 0 / 38%) 100%);
+  z-index: 5;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .hud {
@@ -220,6 +236,3 @@ body {
   display: none;
 }
 
-canvas {
-  display: block;
-}
