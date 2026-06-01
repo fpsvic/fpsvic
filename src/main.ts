@@ -145,41 +145,29 @@ hud.innerHTML = `
 `;
 app.appendChild(hud);
 
-const healthText = hud.querySelector<HTMLElement>("[data-health]");
-const aliveText = hud.querySelector<HTMLElement>("[data-alive]");
-const scoreText = hud.querySelector<HTMLElement>("[data-score]");
-const stormText = hud.querySelector<HTMLElement>("[data-storm]");
-const weaponNameText = hud.querySelector<HTMLElement>("[data-weapon-name]");
-const weaponInfoText = hud.querySelector<HTMLElement>("[data-weapon-info]");
-const healthBar = hud.querySelector<HTMLElement>("[data-health-bar]");
-const cooldownBar = hud.querySelector<HTMLElement>("[data-cooldown]");
-const message = hud.querySelector<HTMLElement>("[data-message]");
-const startPanel = hud.querySelector<HTMLElement>("[data-start-panel]");
-const endPanel = hud.querySelector<HTMLElement>("[data-end-panel]");
-const endTitle = hud.querySelector<HTMLElement>("[data-end-title]");
-const endCopy = hud.querySelector<HTMLElement>("[data-end-copy]");
-const startButton = hud.querySelector<HTMLButtonElement>("[data-start-button]");
-const restartButton = hud.querySelector<HTMLButtonElement>("[data-restart-button]");
-
-if (
-  !healthText ||
-  !aliveText ||
-  !scoreText ||
-  !stormText ||
-  !weaponNameText ||
-  !weaponInfoText ||
-  !healthBar ||
-  !cooldownBar ||
-  !message ||
-  !startPanel ||
-  !endPanel ||
-  !endTitle ||
-  !endCopy ||
-  !startButton ||
-  !restartButton
-) {
-  throw new Error("Unable to initialize game HUD.");
+function requireHudElement<T extends HTMLElement>(selector: string): T {
+  const element = hud.querySelector<T>(selector);
+  if (!element) {
+    throw new Error(`Unable to initialize game HUD: missing ${selector}.`);
+  }
+  return element;
 }
+
+const healthText = requireHudElement<HTMLElement>("[data-health]");
+const aliveText = requireHudElement<HTMLElement>("[data-alive]");
+const scoreText = requireHudElement<HTMLElement>("[data-score]");
+const stormText = requireHudElement<HTMLElement>("[data-storm]");
+const weaponNameText = requireHudElement<HTMLElement>("[data-weapon-name]");
+const weaponInfoText = requireHudElement<HTMLElement>("[data-weapon-info]");
+const healthBar = requireHudElement<HTMLElement>("[data-health-bar]");
+const cooldownBar = requireHudElement<HTMLElement>("[data-cooldown]");
+const message = requireHudElement<HTMLElement>("[data-message]");
+const startPanel = requireHudElement<HTMLElement>("[data-start-panel]");
+const endPanel = requireHudElement<HTMLElement>("[data-end-panel]");
+const endTitle = requireHudElement<HTMLElement>("[data-end-title]");
+const endCopy = requireHudElement<HTMLElement>("[data-end-copy]");
+const startButton = requireHudElement<HTMLButtonElement>("[data-start-button]");
+const restartButton = requireHudElement<HTMLButtonElement>("[data-restart-button]");
 
 const clock = new THREE.Clock();
 const world = new THREE.Group();
