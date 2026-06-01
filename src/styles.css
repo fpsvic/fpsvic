@@ -125,7 +125,8 @@ body {
 }
 
 .health-wrap,
-.cooldown-wrap {
+.cooldown-wrap,
+.charge-wrap {
   width: 100%;
   height: 12px;
   overflow: hidden;
@@ -135,7 +136,8 @@ body {
 }
 
 .health-bar,
-.cooldown-bar {
+.cooldown-bar,
+.charge-bar {
   width: 100%;
   height: 100%;
   border-radius: inherit;
@@ -148,6 +150,15 @@ body {
 
 .cooldown-bar {
   background: linear-gradient(90deg, #56d6ff, #a982ff);
+}
+
+.charge-bar {
+  background: linear-gradient(90deg, #ff9f43, #ffd56b);
+  transition: filter 0.12s ease;
+}
+
+.charge-bar.ready {
+  filter: brightness(1.35) saturate(1.2);
 }
 
 .center-message {
