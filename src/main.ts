@@ -1,5 +1,15 @@
 import * as THREE from "three";
+import {
+  animateHumanoid,
+  createHumanoid,
+  setHumanoidFlash,
+  type HumanoidPalette,
+  type HumanoidRig,
+} from "./humanoid";
+import { createArenaTerrain, sampleTerrainHeight } from "./terrain";
 import "./styles.css";
+
+const ARENA_RADIUS = 90;
 
 type GameState = "start" | "playing" | "ended";
 
@@ -17,6 +27,8 @@ type Weapon = {
 
 type Enemy = {
   group: THREE.Group;
+  humanoid: HumanoidRig;
+  walkPhase: number;
   health: number;
   maxHealth: number;
   speed: number;
@@ -100,7 +112,7 @@ const renderer = new THREE.WebGLRenderer({
   powerPreference: "high-performance",
 });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
@@ -185,14 +197,8 @@ const slashEffects = new THREE.Group();
 scene.add(world, props, enemiesGroup, pickupsGroup, slashEffects);
 
 const sharedGeometries = {
-  terrain: new THREE.CircleGeometry(92, 48),
-  centerPad: new THREE.CircleGeometry(22, 32),
-  stormRing: new THREE.RingGeometry(1, 1.8, 48),
-  safeRing: new THREE.RingGeometry(1, 1.08, 48),
-  playerBody: new THREE.CapsuleGeometry(0.46, 1.2, 5, 10),
-  playerHead: new THREE.SphereGeometry(0.34, 12, 10),
-  enemyBody: new THREE.CapsuleGeometry(0.42, 1.0, 5, 10),
-  enemyHead: new THREE.SphereGeometry(0.32, 10, 8),
+  stormRing: new THREE.RingGeometry(1, 1.8, 40),
+  safeRing: new THREE.RingGeometry(1, 1.08, 40),
   weaponHandle: new THREE.CylinderGeometry(0.055, 0.075, 1, 8),
   weaponBlade: new THREE.BoxGeometry(1, 0.1, 0.16),
   weaponTip: new THREE.ConeGeometry(0.14, 0.28, 4),
@@ -204,16 +210,6 @@ const sharedGeometries = {
   wall: new THREE.BoxGeometry(8, 2.8, 0.7),
 };
 
-const groundMaterial = new THREE.MeshStandardMaterial({
-  color: 0x2d5a3f,
-  roughness: 0.92,
-  metalness: 0.02,
-});
-const sandMaterial = new THREE.MeshStandardMaterial({
-  color: 0xb89a6a,
-  roughness: 0.96,
-  metalness: 0.01,
-});
 const stoneMaterial = new THREE.MeshStandardMaterial({
   color: 0x6a737f,
   roughness: 0.88,
@@ -224,26 +220,18 @@ const woodMaterial = new THREE.MeshStandardMaterial({
   roughness: 0.9,
   metalness: 0.02,
 });
-const playerMaterial = new THREE.MeshStandardMaterial({
-  color: 0x3f4d58,
-  roughness: 0.78,
-  metalness: 0.22,
-});
-const skinMaterial = new THREE.MeshStandardMaterial({
-  color: 0xd4a882,
-  roughness: 0.72,
-  metalness: 0.02,
-});
-const enemyMaterial = new THREE.MeshStandardMaterial({
-  color: 0x5c3238,
-  roughness: 0.8,
-  metalness: 0.18,
-});
-const enemyHelmetMaterial = new THREE.MeshStandardMaterial({
-  color: 0x2a2224,
-  roughness: 0.55,
-  metalness: 0.35,
-});
+const playerPalette: HumanoidPalette = {
+  skin: new THREE.MeshStandardMaterial({ color: 0xd4a882, roughness: 0.76, metalness: 0.02 }),
+  shirt: new THREE.MeshStandardMaterial({ color: 0x3d4f5c, roughness: 0.82, metalness: 0.12 }),
+  pants: new THREE.MeshStandardMaterial({ color: 0x2a3238, roughness: 0.9, metalness: 0.04 }),
+  boots: new THREE.MeshStandardMaterial({ color: 0x1e1814, roughness: 0.88, metalness: 0.08 }),
+};
+const enemyPalette: HumanoidPalette = {
+  skin: new THREE.MeshStandardMaterial({ color: 0xc9a07e, roughness: 0.78, metalness: 0.02 }),
+  shirt: new THREE.MeshStandardMaterial({ color: 0x5a3038, roughness: 0.84, metalness: 0.1 }),
+  pants: new THREE.MeshStandardMaterial({ color: 0x2f2426, roughness: 0.9, metalness: 0.05 }),
+  boots: new THREE.MeshStandardMaterial({ color: 0x141010, roughness: 0.9, metalness: 0.06 }),
+};
 const gripMaterial = new THREE.MeshStandardMaterial({
   color: 0x1e1814,
   roughness: 0.88,
@@ -324,7 +312,7 @@ scene.add(ambientLight);
 const sun = new THREE.DirectionalLight(0xfff2dd, 2.4);
 sun.position.set(42, 58, 24);
 sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.mapSize.set(768, 768);
 sun.shadow.bias = -0.0008;
 sun.shadow.normalBias = 0.02;
 sun.shadow.camera.left = -72;
@@ -335,16 +323,8 @@ sun.shadow.camera.near = 8;
 sun.shadow.camera.far = 140;
 scene.add(sun);
 
-const terrain = new THREE.Mesh(sharedGeometries.terrain, groundMaterial);
-terrain.rotation.x = -Math.PI / 2;
-terrain.receiveShadow = true;
-world.add(terrain);
-
-const centerPad = new THREE.Mesh(sharedGeometries.centerPad, sandMaterial);
-centerPad.position.y = 0.012;
-centerPad.rotation.x = -Math.PI / 2;
-centerPad.receiveShadow = true;
-world.add(centerPad);
+const arenaTerrain = createArenaTerrain();
+world.add(arenaTerrain.mesh);
 
 const stormRing = new THREE.Mesh(sharedGeometries.stormRing, stormMaterial);
 stormRing.rotation.x = -Math.PI / 2;
@@ -359,19 +339,11 @@ scene.add(safeRing);
 const player = new THREE.Group();
 scene.add(player);
 
-const playerBody = new THREE.Mesh(sharedGeometries.playerBody, playerMaterial);
-playerBody.position.y = 0.98;
-playerBody.castShadow = true;
-player.add(playerBody);
-
-const playerHead = new THREE.Mesh(sharedGeometries.playerHead, skinMaterial);
-playerHead.position.y = 1.92;
-playerHead.castShadow = true;
-player.add(playerHead);
+const playerHumanoid = createHumanoid(playerPalette, 1, true);
+player.add(playerHumanoid.root);
 
 const playerWeapon = new THREE.Group();
-playerWeapon.position.set(0.58, 1.14, -0.2);
-player.add(playerWeapon);
+playerHumanoid.weaponMount.add(playerWeapon);
 
 const keys = new Set<string>();
 const moveVector = new THREE.Vector3();
@@ -437,6 +409,10 @@ function getWeaponIndex(weapon: Weapon): number {
   return weapons.indexOf(weapon);
 }
 
+function snapToGround(object: THREE.Object3D): void {
+  object.position.y = sampleTerrainHeight(object.position.x, object.position.z);
+}
+
 function createWeaponMesh(weapon: Weapon): THREE.Group {
   const weaponIndex = getWeaponIndex(weapon);
   const bladeMaterial = weaponBladeMaterials[weaponIndex] ?? weaponBladeMaterials[0];
@@ -445,19 +421,19 @@ function createWeaponMesh(weapon: Weapon): THREE.Group {
   const handle = new THREE.Mesh(sharedGeometries.weaponHandle, gripMaterial);
   handle.scale.set(1, weapon.handleLength, 1);
   handle.rotation.z = Math.PI / 2;
-  handle.castShadow = true;
+  handle.castShadow = false;
   weaponGroup.add(handle);
 
   const blade = new THREE.Mesh(sharedGeometries.weaponBlade, bladeMaterial);
   blade.scale.set(weapon.bladeLength, 1, 1);
   blade.position.x = weapon.bladeLength / 2 + weapon.handleLength / 2;
-  blade.castShadow = true;
+  blade.castShadow = false;
   weaponGroup.add(blade);
 
   const tip = new THREE.Mesh(sharedGeometries.weaponTip, bladeMaterial);
   tip.position.x = weapon.bladeLength + weapon.handleLength / 2 + 0.14;
   tip.rotation.z = -Math.PI / 2;
-  tip.castShadow = true;
+  tip.castShadow = false;
   weaponGroup.add(tip);
 
   if (weapon.name.includes("Axe")) {
@@ -467,7 +443,7 @@ function createWeaponMesh(weapon: Weapon): THREE.Group {
     );
     axeHead.position.x = weapon.bladeLength + weapon.handleLength / 2 - 0.05;
     axeHead.position.y = 0.2;
-    axeHead.castShadow = true;
+    axeHead.castShadow = false;
     weaponGroup.add(axeHead);
   }
 
@@ -490,35 +466,28 @@ function equipWeapon(weapon: Weapon): void {
 function createEnemy(x: number, z: number, scale = 1): Enemy {
   const group = new THREE.Group();
   group.position.set(x, 0, z);
+  snapToGround(group);
 
-  const body = new THREE.Mesh(sharedGeometries.enemyBody, enemyMaterial);
-  body.scale.setScalar(scale);
-  body.position.y = 0.9 * scale;
-  body.castShadow = true;
-  group.add(body);
-
-  const helmet = new THREE.Mesh(sharedGeometries.enemyHead, enemyHelmetMaterial);
-  helmet.scale.setScalar(scale);
-  helmet.position.y = 1.68 * scale;
-  helmet.castShadow = true;
-  group.add(helmet);
+  const humanoid = createHumanoid(enemyPalette, scale, false);
+  group.add(humanoid.root);
 
   const bladeMaterial = weaponBladeMaterials[Math.floor(Math.random() * weapons.length)];
   const blade = new THREE.Mesh(sharedGeometries.weaponBlade, bladeMaterial);
-  blade.scale.set(0.85 * scale, 1, 1);
-  blade.position.set(0.48 * scale, 1.02 * scale, -0.1);
-  blade.rotation.z = 0.15;
-  blade.castShadow = true;
-  group.add(blade);
+  blade.scale.set(0.75 * scale, 1, 1);
+  blade.rotation.z = 0.2;
+  blade.castShadow = false;
+  humanoid.weaponMount.add(blade);
 
   enemiesGroup.add(group);
 
   return {
     group,
+    humanoid,
+    walkPhase: Math.random() * Math.PI * 2,
     health: 80 + scale * 20,
     maxHealth: 80 + scale * 20,
     speed: 2.35 + Math.random() * 0.95,
-    radius: 0.56 * scale,
+    radius: 0.52 * scale,
     cooldown: Math.random() * 1.4,
     stun: 0,
   };
@@ -526,14 +495,15 @@ function createEnemy(x: number, z: number, scale = 1): Enemy {
 
 function createPickup(weapon: Weapon, x: number, z: number): Pickup {
   const group = new THREE.Group();
-  group.position.set(x, 0.75, z);
+  const groundY = sampleTerrainHeight(x, z);
+  group.position.set(x, groundY + 0.55, z);
   const weaponIndex = getWeaponIndex(weapon);
 
   const platform = new THREE.Mesh(
     sharedGeometries.pickupPlatform,
     weaponBladeMaterials[weaponIndex] ?? weaponBladeMaterials[0],
   );
-  platform.castShadow = true;
+  platform.castShadow = false;
   group.add(platform);
 
   const weaponMesh = createWeaponMesh(weapon);
@@ -553,16 +523,19 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
 }
 
 function addProps(): void {
-  const rockCount = 26;
+  const rockCount = 20;
   const rocks = new THREE.InstancedMesh(sharedGeometries.rock, stoneMaterial, rockCount);
-  rocks.castShadow = true;
+  rocks.castShadow = false;
   rocks.receiveShadow = true;
 
   for (let index = 0; index < rockCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
     const radius = 28 + Math.random() * 54;
     const size = 0.55 + Math.random() * 1.2;
-    dummy.position.set(Math.cos(angle) * radius, 0.4 * size, Math.sin(angle) * radius);
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+    const y = sampleTerrainHeight(x, z) + 0.25 * size;
+    dummy.position.set(x, y, z);
     dummy.rotation.set(Math.random() * 2, Math.random() * 2, Math.random() * 2);
     dummy.scale.set(size, size * (0.5 + Math.random() * 0.35), size);
     dummy.updateMatrix();
@@ -571,11 +544,11 @@ function addProps(): void {
   rocks.instanceMatrix.needsUpdate = true;
   props.add(rocks);
 
-  const treeCount = 30;
+  const treeCount = 22;
   const trunks = new THREE.InstancedMesh(sharedGeometries.treeTrunk, woodMaterial, treeCount);
   const leaves = new THREE.InstancedMesh(sharedGeometries.treeLeaves, leavesMaterial, treeCount);
-  trunks.castShadow = true;
-  leaves.castShadow = true;
+  trunks.castShadow = false;
+  leaves.castShadow = false;
 
   for (let index = 0; index < treeCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
@@ -583,14 +556,15 @@ function addProps(): void {
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
     const scale = 0.85 + Math.random() * 0.35;
+    const groundY = sampleTerrainHeight(x, z);
 
-    dummy.position.set(x, 1.05 * scale, z);
+    dummy.position.set(x, groundY + 1.05 * scale, z);
     dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
     dummy.scale.setScalar(scale);
     dummy.updateMatrix();
     trunks.setMatrixAt(index, dummy.matrix);
 
-    dummy.position.set(x, 2.75 * scale, z);
+    dummy.position.set(x, groundY + 2.75 * scale, z);
     dummy.updateMatrix();
     leaves.setMatrixAt(index, dummy.matrix);
   }
@@ -598,12 +572,15 @@ function addProps(): void {
   leaves.instanceMatrix.needsUpdate = true;
   props.add(trunks, leaves);
 
-  for (let index = 0; index < 8; index += 1) {
-    const angle = (index / 8) * Math.PI * 2;
+  for (let index = 0; index < 6; index += 1) {
+    const angle = (index / 6) * Math.PI * 2;
+    const x = Math.cos(angle) * 18;
+    const z = Math.sin(angle) * 18;
     const wall = new THREE.Mesh(sharedGeometries.wall, stoneMaterial);
-    wall.position.set(Math.cos(angle) * 18, 1.4, Math.sin(angle) * 18);
+    const groundY = sampleTerrainHeight(x, z);
+    wall.position.set(x, groundY + 1.4, z);
     wall.rotation.y = -angle;
-    wall.castShadow = true;
+    wall.castShadow = false;
     wall.receiveShadow = true;
     props.add(wall);
   }
@@ -636,15 +613,17 @@ function spawnMatch(): void {
   hudCache.health = -1;
   equipWeapon(weapons[0]);
 
-  for (let index = 0; index < 10; index += 1) {
-    const angle = (index / 10) * Math.PI * 2 + Math.random() * 0.35;
-    const radius = 19 + Math.random() * 38;
+  snapToGround(player);
+
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index / 8) * Math.PI * 2 + Math.random() * 0.35;
+    const radius = 19 + Math.random() * 36;
     enemies.push(
-      createEnemy(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.92 + Math.random() * 0.24),
+      createEnemy(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.94 + Math.random() * 0.18),
     );
   }
 
-  for (let index = 0; index < 12; index += 1) {
+  for (let index = 0; index < 10; index += 1) {
     const weapon = weapons[1 + Math.floor(Math.random() * (weapons.length - 1))];
     const angle = Math.random() * Math.PI * 2;
     const radius = 8 + Math.random() * 58;
@@ -717,7 +696,7 @@ function spawnSlashEffect(origin: THREE.Vector3, direction: THREE.Vector3, range
   slash.material.opacity = 0.58;
   slash.scale.set(range, range, 1);
   slash.position.copy(origin).addScaledVector(direction, range * 0.45);
-  slash.position.y = 0.12;
+  slash.position.y = sampleTerrainHeight(slash.position.x, slash.position.z) + 0.08;
   slash.rotation.z = Math.atan2(direction.z, direction.x) - 0.55;
   slash.userData.life = 0.16;
   slash.visible = true;
@@ -806,15 +785,15 @@ function updateInput(delta: number): void {
   player.position.addScaledVector(playerVelocity, delta);
 
   const distanceFromCenter = Math.hypot(player.position.x, player.position.z);
-  if (distanceFromCenter > 86) {
-    player.position.multiplyScalar(86 / distanceFromCenter);
+  if (distanceFromCenter > ARENA_RADIUS - 2) {
+    player.position.multiplyScalar((ARENA_RADIUS - 2) / distanceFromCenter);
     playerVelocity.multiplyScalar(0.35);
   }
 
   player.rotation.y = Math.atan2(playerDirection.x, playerDirection.z);
-  const bob = Math.sin(headBobPhase) * 0.04 * playerVelocity.length();
-  playerBody.position.y = 0.98 + bob;
-  playerHead.position.y = 1.92 + bob;
+  snapToGround(player);
+  const swing = attackTime > 0 ? Math.sin((attackTime / 0.22) * Math.PI) : 0;
+  animateHumanoid(playerHumanoid, playerVelocity.length(), headBobPhase, swing);
 
   if (dashCooldown > 0) {
     dashCooldown -= delta;
@@ -836,7 +815,7 @@ function updateCamera(delta: number): void {
   cameraPitch = THREE.MathUtils.clamp(cameraPitch, 0.28, 0.82);
   const radius = 7.6;
   const height = 2.8 + cameraPitch * 4.2;
-  cameraTarget.copy(player.position).add(new THREE.Vector3(0, 1.38, 0));
+  cameraTarget.copy(player.position).add(new THREE.Vector3(0, 1.62, 0));
 
   if (cameraShakeDecay > 0) {
     cameraShakeDecay = Math.max(0, cameraShakeDecay - delta * 2.8);
@@ -870,9 +849,11 @@ function updateEnemies(delta: number): void {
     const direction = distance > 0.001 ? toPlayer.normalize() : tempVector.set(0, 0, 1);
     enemy.group.rotation.y = Math.atan2(direction.x, direction.z);
 
+    let moveSpeed = 0;
     if (enemy.stun <= 0) {
       if (distance > 1.55) {
         enemy.group.position.addScaledVector(direction, enemy.speed * delta);
+        moveSpeed = enemy.speed;
       } else if (enemy.cooldown <= 0) {
         applyPlayerDamage(11);
         enemy.cooldown = 0.9 + Math.random() * 0.4;
@@ -883,7 +864,12 @@ function updateEnemies(delta: number): void {
     if (distFromCenter > stormRadius - 2) {
       tempVectorTwo.copy(enemy.group.position).multiplyScalar(-1).normalize();
       enemy.group.position.addScaledVector(tempVectorTwo, enemy.speed * delta * 1.2);
+      moveSpeed = enemy.speed;
     }
+
+    snapToGround(enemy.group);
+    enemy.walkPhase += delta * (4.5 + moveSpeed * 0.55);
+    animateHumanoid(enemy.humanoid, moveSpeed, enemy.walkPhase, 0);
   }
 }
 
@@ -893,7 +879,9 @@ function updatePickups(delta: number): void {
 
   for (const pickup of pickups) {
     pickup.group.rotation.y += delta * 1.2;
-    pickup.group.position.y = 0.72 + Math.sin(clock.elapsedTime * 2.1 + pickup.bobOffset) * 0.12;
+    const groundY = sampleTerrainHeight(pickup.group.position.x, pickup.group.position.z);
+    pickup.group.position.y =
+      groundY + 0.55 + Math.sin(clock.elapsedTime * 2.1 + pickup.bobOffset) * 0.1;
     const distance = pickup.group.position.distanceTo(player.position);
     if (distance < 2.4 && distance < nearestDistance) {
       nearestDistance = distance;
@@ -944,17 +932,10 @@ function updateWeapon(delta: number): void {
   invulnerable = Math.max(0, invulnerable - delta);
 
   const swing = attackTime > 0 ? Math.sin((attackTime / 0.22) * Math.PI) : 0;
-  playerWeapon.rotation.set(0, 0, -0.1 - swing * 1.28);
-  playerWeapon.position.set(0.58 + swing * 0.1, 1.14, -0.2 - swing * 0.24);
+  playerWeapon.rotation.set(0.15, 0, -0.35 - swing * 0.5);
 
-  if (invulnerable > 0) {
-    const flash = Math.sin(clock.elapsedTime * 34) > 0;
-    playerMaterial.opacity = flash ? 0.55 : 1;
-    playerMaterial.transparent = flash;
-  } else {
-    playerMaterial.opacity = 1;
-    playerMaterial.transparent = false;
-  }
+  const flashing = invulnerable > 0 && Math.sin(clock.elapsedTime * 34) > 0;
+  setHumanoidFlash(playerHumanoid, playerPalette, flashing);
 }
 
 function updateHud(): void {
@@ -1059,6 +1040,7 @@ renderer.domElement.addEventListener("click", () => {
 });
 
 addProps();
+snapToGround(player);
 equipWeapon(equippedWeapon);
 setState("start");
 updateCamera(1);
