@@ -1,0 +1,215 @@
+:root {
+  color: #f7fbff;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  background: #081321;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+.hud {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.top-bar,
+.bottom-bar,
+.weapon-card,
+.start-panel,
+.end-panel {
+  border: 1px solid rgb(255 255 255 / 16%);
+  background: rgb(5 13 23 / 72%);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 28%);
+  backdrop-filter: blur(14px);
+}
+
+.top-bar {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 16px;
+  border-radius: 999px;
+  transform: translateX(-50%);
+}
+
+.stat {
+  display: grid;
+  gap: 2px;
+  min-width: 72px;
+  text-align: center;
+}
+
+.stat span {
+  color: #8fb0c9;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.stat strong {
+  font-size: 18px;
+}
+
+.bottom-bar {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  gap: 8px;
+  width: min(360px, calc(100vw - 36px));
+  padding: 14px;
+  border-radius: 18px;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  color: #cfe8ff;
+  font-size: 13px;
+}
+
+.controls kbd {
+  display: inline-grid;
+  min-width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0 7px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 7px;
+  color: #fff;
+  background: rgb(255 255 255 / 11%);
+  font-family: inherit;
+  font-weight: 800;
+}
+
+.weapon-card {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  display: grid;
+  gap: 6px;
+  width: min(310px, calc(100vw - 36px));
+  padding: 16px;
+  border-radius: 18px;
+}
+
+.weapon-name {
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.weapon-info {
+  color: #c5d8ea;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.health-wrap,
+.cooldown-wrap {
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 10%);
+}
+
+.health-bar,
+.cooldown-bar {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  transform-origin: left center;
+}
+
+.health-bar {
+  background: linear-gradient(90deg, #38e37f, #b8ff6c);
+}
+
+.cooldown-bar {
+  background: linear-gradient(90deg, #56d6ff, #a982ff);
+}
+
+.center-message {
+  position: absolute;
+  top: 48%;
+  left: 50%;
+  color: rgb(255 255 255 / 68%);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transform: translate(-50%, -50%);
+}
+
+.start-panel,
+.end-panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  gap: 14px;
+  width: min(560px, calc(100vw - 36px));
+  padding: 28px;
+  border-radius: 28px;
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+}
+
+.start-panel h1,
+.end-panel h2 {
+  margin: 0;
+  font-size: clamp(36px, 8vw, 72px);
+  line-height: 0.92;
+  text-transform: uppercase;
+}
+
+.start-panel p,
+.end-panel p {
+  margin: 0;
+  color: #c5d8ea;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.start-panel button,
+.end-panel button {
+  width: fit-content;
+  padding: 13px 20px;
+  border: 0;
+  border-radius: 999px;
+  color: #06101c;
+  background: linear-gradient(135deg, #b8ff6c, #56d6ff);
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.hidden {
+  display: none;
+}
+
+canvas {
+  display: block;
+}
