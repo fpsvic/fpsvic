@@ -2,7 +2,15 @@ import * as THREE from "three";
 
 const ARENA_RADIUS = 90;
 const TERRAIN_SIZE = 184;
-const TERRAIN_SEGMENTS = 36;
+const TERRAIN_SEGMENTS = 24;
+const HEIGHT_CACHE_STEP = 2;
+const heightCache = new Map<number, number>();
+
+function heightCacheKey(x: number, z: number): number {
+  const qx = Math.round(x / HEIGHT_CACHE_STEP);
+  const qz = Math.round(z / HEIGHT_CACHE_STEP);
+  return qx * 73856093 ^ qz * 19349663;
+}
 
 function hash2(x: number, z: number): number {
   const value = Math.sin(x * 127.1 + z * 311.7) * 43758.5453;
@@ -38,6 +46,12 @@ function fbm(x: number, z: number): number {
 }
 
 export function sampleTerrainHeight(x: number, z: number): number {
+  const key = heightCacheKey(x, z);
+  const cached = heightCache.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   const dist = Math.hypot(x, z);
   if (dist > ARENA_RADIUS + 2) {
     return -2.5;
@@ -54,7 +68,13 @@ export function sampleTerrainHeight(x: number, z: number): number {
   const edgeFalloff = THREE.MathUtils.smoothstep(ARENA_RADIUS, ARENA_RADIUS - 10, dist);
   height *= edgeFalloff;
 
-  return Math.max(0, height);
+  const result = Math.max(0, height);
+  heightCache.set(key, result);
+  return result;
+}
+
+export function clearTerrainHeightCache(): void {
+  heightCache.clear();
 }
 
 function buildTerrainGeometry(): THREE.BufferGeometry {
@@ -77,7 +97,7 @@ function buildTerrainGeometry(): THREE.BufferGeometry {
     positions.setY(index, height);
 
     const dist = Math.hypot(x, z);
-    const slope = Math.min(1, Math.abs(height - sampleTerrainHeight(x + 1.2, z)) * 0.9);
+    const slope = Math.min(1, Math.abs(height - sampleTerrainHeight(x + 2, z)) * 0.45);
     const grass = new THREE.Color(0x3f6b42).lerp(new THREE.Color(0x5f8f52), height * 0.35);
     const dirt = new THREE.Color(0x8a7355).lerp(new THREE.Color(0x6f5a42), slope);
     const path = new THREE.Color(0xb39a72);

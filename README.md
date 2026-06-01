@@ -4,7 +4,7 @@ A browser-based 3D melee battle arena built with Vite, TypeScript, and Three.js.
 
 ## Features
 
-- Third-person 3D movement with mouse aiming
+- Third-person click-to-move controls with camera rotation
 - Melee-only combat with knives, swords, axes, and spears
 - Enemy bots that chase and attack the player
 - Weapon pickups with different damage, range, cooldown, and knockback
@@ -12,10 +12,10 @@ A browser-based 3D melee battle arena built with Vite, TypeScript, and Three.js.
 
 ## Controls
 
-- `WASD`: Move
-- Mouse: Aim camera
-- Left click: Slash
-- `Space`: Dash
+- Left click (on ground): Walk to that point
+- Right click: Slash (faces cursor)
+- Right mouse drag: Rotate camera
+- `Space`: Dash toward move target
 - `E`: Pick up nearby weapon
 - `R`: Restart after a match
 

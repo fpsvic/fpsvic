@@ -112,12 +112,11 @@ const renderer = new THREE.WebGLRenderer({
   powerPreference: "high-performance",
 });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.08;
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.toneMappingExposure = 1.02;
+renderer.shadowMap.enabled = false;
 app.appendChild(renderer.domElement);
 
 const hud = document.createElement("div");
@@ -139,9 +138,9 @@ hud.innerHTML = `
 
   <div class="bottom-bar">
     <div class="controls">
-      <div><kbd>WASD</kbd> move</div>
-      <div><kbd>Mouse</kbd> aim</div>
-      <div><kbd>Click</kbd> slash</div>
+      <div><kbd>LMB</kbd> move to point</div>
+      <div><kbd>RMB</kbd> slash</div>
+      <div><kbd>Drag RMB</kbd> rotate camera</div>
       <div><kbd>Space</kbd> dash</div>
       <div><kbd>E</kbd> pick up</div>
       <div><kbd>R</kbd> restart</div>
@@ -266,65 +265,28 @@ const weaponBladeMaterials = weapons.map(
     }),
 );
 
-function addSky(): void {
-  const skyUniforms = {
-    topColor: { value: new THREE.Color(0x3d6ea8) },
-    horizonColor: { value: horizonColor.clone() },
-    bottomColor: { value: new THREE.Color(0x6a8f6a) },
-  };
-  const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(280, 24, 12),
-    new THREE.ShaderMaterial({
-      uniforms: skyUniforms,
-      vertexShader: `
-        varying vec3 vWorldPosition;
-        void main() {
-          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-          vWorldPosition = worldPosition.xyz;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform vec3 topColor;
-        uniform vec3 horizonColor;
-        uniform vec3 bottomColor;
-        varying vec3 vWorldPosition;
-        void main() {
-          float h = normalize(vWorldPosition).y;
-          vec3 color = h > 0.0
-            ? mix(horizonColor, topColor, pow(h, 0.65))
-            : mix(horizonColor, bottomColor, pow(-h, 0.85));
-          gl_FragColor = vec4(color, 1.0);
-        }
-      `,
-      side: THREE.BackSide,
-      depthWrite: false,
-    }),
-  );
-  scene.add(sky);
-}
-
-addSky();
-
-const ambientLight = new THREE.HemisphereLight(0xc8dff5, 0x3a4a32, 0.55);
+const ambientLight = new THREE.HemisphereLight(0xc8dff5, 0x3a4a32, 0.72);
 scene.add(ambientLight);
 
-const sun = new THREE.DirectionalLight(0xfff2dd, 2.4);
+const sun = new THREE.DirectionalLight(0xfff2dd, 1.35);
 sun.position.set(42, 58, 24);
-sun.castShadow = true;
-sun.shadow.mapSize.set(768, 768);
-sun.shadow.bias = -0.0008;
-sun.shadow.normalBias = 0.02;
-sun.shadow.camera.left = -72;
-sun.shadow.camera.right = 72;
-sun.shadow.camera.top = 72;
-sun.shadow.camera.bottom = -72;
-sun.shadow.camera.near = 8;
-sun.shadow.camera.far = 140;
 scene.add(sun);
 
 const arenaTerrain = createArenaTerrain();
 world.add(arenaTerrain.mesh);
+
+const moveMarker = new THREE.Mesh(
+  new THREE.RingGeometry(0.32, 0.52, 12),
+  new THREE.MeshBasicMaterial({
+    color: 0x7ec8ff,
+    transparent: true,
+    opacity: 0.75,
+    depthWrite: false,
+  }),
+);
+moveMarker.rotation.x = -Math.PI / 2;
+moveMarker.visible = false;
+scene.add(moveMarker);
 
 const stormRing = new THREE.Mesh(sharedGeometries.stormRing, stormMaterial);
 stormRing.rotation.x = -Math.PI / 2;
@@ -339,16 +301,15 @@ scene.add(safeRing);
 const player = new THREE.Group();
 scene.add(player);
 
-const playerHumanoid = createHumanoid(playerPalette, 1, true);
+const playerHumanoid = createHumanoid(playerPalette, 1, false);
 player.add(playerHumanoid.root);
 
 const playerWeapon = new THREE.Group();
 playerHumanoid.weaponMount.add(playerWeapon);
 
-const keys = new Set<string>();
-const moveVector = new THREE.Vector3();
-const forward = new THREE.Vector3();
-const right = new THREE.Vector3();
+const raycaster = new THREE.Raycaster();
+const mouseNdc = new THREE.Vector2();
+const moveTarget = new THREE.Vector3();
 const tempVector = new THREE.Vector3();
 const tempVectorTwo = new THREE.Vector3();
 const cameraTarget = new THREE.Vector3();
@@ -373,6 +334,10 @@ let cameraPitch = 0.48;
 let nearestPickup: Pickup | null = null;
 let cameraShakeDecay = 0;
 let headBobPhase = 0;
+let hasMoveTarget = false;
+let isCameraRotating = false;
+let cameraRotateStartX = 0;
+let cameraRotateStartY = 0;
 
 const enemies: Enemy[] = [];
 const pickups: Pickup[] = [];
@@ -386,7 +351,7 @@ const hudCache = {
   cooldownScale: -1,
 };
 
-const SLASH_POOL_SIZE = 5;
+const SLASH_POOL_SIZE = 3;
 const slashPool: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[] = [];
 
 for (let index = 0; index < SLASH_POOL_SIZE; index += 1) {
@@ -411,6 +376,35 @@ function getWeaponIndex(weapon: Weapon): number {
 
 function snapToGround(object: THREE.Object3D): void {
   object.position.y = sampleTerrainHeight(object.position.x, object.position.z);
+}
+
+function getGroundPointFromEvent(event: MouseEvent): THREE.Vector3 | null {
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouseNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouseNdc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouseNdc, camera);
+  const hit = raycaster.intersectObject(arenaTerrain.mesh, false)[0];
+  return hit ? hit.point : null;
+}
+
+function setMoveDestination(point: THREE.Vector3): void {
+  moveTarget.set(point.x, sampleTerrainHeight(point.x, point.z), point.z);
+  hasMoveTarget = true;
+  moveMarker.visible = true;
+  moveMarker.position.set(moveTarget.x, moveTarget.y + 0.12, moveTarget.z);
+}
+
+function clearMoveDestination(): void {
+  hasMoveTarget = false;
+  moveMarker.visible = false;
+}
+
+function faceTowardGroundPoint(point: THREE.Vector3): void {
+  tempVectorTwo.set(point.x - player.position.x, 0, point.z - player.position.z);
+  if (tempVectorTwo.lengthSq() > 0.0004) {
+    playerDirection.copy(tempVectorTwo.normalize());
+    player.rotation.y = Math.atan2(playerDirection.x, playerDirection.z);
+  }
 }
 
 function createWeaponMesh(weapon: Weapon): THREE.Group {
@@ -523,7 +517,7 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
 }
 
 function addProps(): void {
-  const rockCount = 20;
+  const rockCount = 12;
   const rocks = new THREE.InstancedMesh(sharedGeometries.rock, stoneMaterial, rockCount);
   rocks.castShadow = false;
   rocks.receiveShadow = true;
@@ -544,7 +538,7 @@ function addProps(): void {
   rocks.instanceMatrix.needsUpdate = true;
   props.add(rocks);
 
-  const treeCount = 22;
+  const treeCount = 14;
   const trunks = new THREE.InstancedMesh(sharedGeometries.treeTrunk, woodMaterial, treeCount);
   const leaves = new THREE.InstancedMesh(sharedGeometries.treeLeaves, leavesMaterial, treeCount);
   trunks.castShadow = false;
@@ -572,8 +566,8 @@ function addProps(): void {
   leaves.instanceMatrix.needsUpdate = true;
   props.add(trunks, leaves);
 
-  for (let index = 0; index < 6; index += 1) {
-    const angle = (index / 6) * Math.PI * 2;
+  for (let index = 0; index < 4; index += 1) {
+    const angle = (index / 4) * Math.PI * 2;
     const x = Math.cos(angle) * 18;
     const z = Math.sin(angle) * 18;
     const wall = new THREE.Mesh(sharedGeometries.wall, stoneMaterial);
@@ -610,20 +604,21 @@ function spawnMatch(): void {
   stormTimer = 0;
   nearestPickup = null;
   cameraShakeDecay = 0;
+  clearMoveDestination();
   hudCache.health = -1;
   equipWeapon(weapons[0]);
 
   snapToGround(player);
 
-  for (let index = 0; index < 8; index += 1) {
-    const angle = (index / 8) * Math.PI * 2 + Math.random() * 0.35;
+  for (let index = 0; index < 6; index += 1) {
+    const angle = (index / 6) * Math.PI * 2 + Math.random() * 0.35;
     const radius = 19 + Math.random() * 36;
     enemies.push(
       createEnemy(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.94 + Math.random() * 0.18),
     );
   }
 
-  for (let index = 0; index < 10; index += 1) {
+  for (let index = 0; index < 8; index += 1) {
     const weapon = weapons[1 + Math.floor(Math.random() * (weapons.length - 1))];
     const angle = Math.random() * Math.PI * 2;
     const radius = 8 + Math.random() * 58;
@@ -641,18 +636,17 @@ function setState(nextState: GameState): void {
 function startMatch(): void {
   spawnMatch();
   setState("playing");
-  renderer.domElement.requestPointerLock().catch(() => {
-    message.textContent = "Click the arena to lock aim";
-  });
+  message.textContent = "Left-click the ground to move";
+  message.classList.remove("hidden");
 }
 
 function endMatch(won: boolean): void {
   setState("ended");
+  clearMoveDestination();
   endTitle.textContent = won ? "Victory Royale" : "Eliminated";
   endCopy.textContent = won
     ? `You cleared the arena with ${score} eliminations.`
     : `You scored ${score} eliminations before the storm or an enemy got you.`;
-  document.exitPointerLock();
 }
 
 function applyPlayerDamage(amount: number): void {
@@ -748,52 +742,47 @@ function pickUpNearest(): void {
   nearestPickup = null;
 }
 
-function updateInput(delta: number): void {
-  moveVector.set(0, 0, 0);
-  forward.set(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
-  right.set(forward.z, 0, -forward.x);
+function updateMovement(delta: number): void {
+  let moveSpeed = 0;
 
-  if (keys.has("KeyW")) {
-    moveVector.add(forward);
-  }
-  if (keys.has("KeyS")) {
-    moveVector.sub(forward);
-  }
-  if (keys.has("KeyD")) {
-    moveVector.add(right);
-  }
-  if (keys.has("KeyA")) {
-    moveVector.sub(right);
-  }
+  if (hasMoveTarget) {
+    tempVectorTwo.set(
+      moveTarget.x - player.position.x,
+      0,
+      moveTarget.z - player.position.z,
+    );
+    const distance = tempVectorTwo.length();
 
-  const sprinting = keys.has("ShiftLeft") || keys.has("ShiftRight");
-  const maxSpeed = sprinting ? 6.4 : 4.85;
-  const accel = sprinting ? 22 : 18;
-  const friction = 14;
-
-  if (moveVector.lengthSq() > 0) {
-    moveVector.normalize();
-    const targetVelocity = tempVectorTwo.copy(moveVector).multiplyScalar(maxSpeed);
-    playerVelocity.lerp(targetVelocity, 1 - Math.exp(-accel * delta));
-    playerDirection.lerp(moveVector, Math.min(1, delta * 12)).normalize();
-    headBobPhase += delta * (sprinting ? 13 : 10);
+    if (distance < 0.42) {
+      clearMoveDestination();
+      playerVelocity.set(0, 0, 0);
+    } else {
+      tempVectorTwo.normalize();
+      playerDirection.copy(tempVectorTwo);
+      moveSpeed = 5.2;
+      const step = Math.min(distance, moveSpeed * delta);
+      player.position.x += tempVectorTwo.x * step;
+      player.position.z += tempVectorTwo.z * step;
+      headBobPhase += delta * 10;
+    }
   } else {
-    playerVelocity.multiplyScalar(Math.max(0, 1 - friction * delta));
+    playerVelocity.set(0, 0, 0);
     headBobPhase *= 0.92;
   }
-
-  player.position.addScaledVector(playerVelocity, delta);
 
   const distanceFromCenter = Math.hypot(player.position.x, player.position.z);
   if (distanceFromCenter > ARENA_RADIUS - 2) {
     player.position.multiplyScalar((ARENA_RADIUS - 2) / distanceFromCenter);
-    playerVelocity.multiplyScalar(0.35);
+    if (hasMoveTarget) {
+      moveTarget.copy(player.position);
+      moveMarker.position.set(moveTarget.x, moveTarget.y + 0.12, moveTarget.z);
+    }
   }
 
   player.rotation.y = Math.atan2(playerDirection.x, playerDirection.z);
   snapToGround(player);
   const swing = attackTime > 0 ? Math.sin((attackTime / 0.22) * Math.PI) : 0;
-  animateHumanoid(playerHumanoid, playerVelocity.length(), headBobPhase, swing);
+  animateHumanoid(playerHumanoid, moveSpeed, headBobPhase, swing);
 
   if (dashCooldown > 0) {
     dashCooldown -= delta;
@@ -804,11 +793,20 @@ function dash(): void {
   if (state !== "playing" || dashCooldown > 0) {
     return;
   }
-  playerVelocity.copy(playerDirection).multiplyScalar(11);
-  player.position.addScaledVector(playerDirection, 3.2);
+
+  if (hasMoveTarget) {
+    faceTowardGroundPoint(moveTarget);
+  }
+
+  player.position.addScaledVector(playerDirection, 4.2);
+  if (hasMoveTarget) {
+    moveTarget.copy(player.position);
+    moveMarker.position.set(moveTarget.x, moveTarget.y + 0.12, moveTarget.z);
+  }
   dashCooldown = 1.35;
   invulnerable = Math.max(invulnerable, 0.22);
   cameraShakeDecay = 0.28;
+  snapToGround(player);
 }
 
 function updateCamera(delta: number): void {
@@ -843,6 +841,8 @@ function updateEnemies(delta: number): void {
     enemy.cooldown = Math.max(0, enemy.cooldown - delta);
     enemy.stun = Math.max(0, enemy.stun - delta);
 
+    const distToPlayer = enemy.group.position.distanceTo(player.position);
+
     const toPlayer = tempVector.copy(player.position).sub(enemy.group.position);
     toPlayer.y = 0;
     const distance = toPlayer.length();
@@ -868,8 +868,10 @@ function updateEnemies(delta: number): void {
     }
 
     snapToGround(enemy.group);
-    enemy.walkPhase += delta * (4.5 + moveSpeed * 0.55);
-    animateHumanoid(enemy.humanoid, moveSpeed, enemy.walkPhase, 0);
+    if (distToPlayer < 48) {
+      enemy.walkPhase += delta * (4.5 + moveSpeed * 0.55);
+      animateHumanoid(enemy.humanoid, moveSpeed, enemy.walkPhase, 0);
+    }
   }
 }
 
@@ -878,11 +880,13 @@ function updatePickups(delta: number): void {
   nearestPickup = null;
 
   for (const pickup of pickups) {
-    pickup.group.rotation.y += delta * 1.2;
-    const groundY = sampleTerrainHeight(pickup.group.position.x, pickup.group.position.z);
-    pickup.group.position.y =
-      groundY + 0.55 + Math.sin(clock.elapsedTime * 2.1 + pickup.bobOffset) * 0.1;
     const distance = pickup.group.position.distanceTo(player.position);
+    if (distance < 55) {
+      pickup.group.rotation.y += delta * 1.1;
+      const groundY = sampleTerrainHeight(pickup.group.position.x, pickup.group.position.z);
+      pickup.group.position.y =
+        groundY + 0.55 + Math.sin(clock.elapsedTime * 2.1 + pickup.bobOffset) * 0.1;
+    }
     if (distance < 2.4 && distance < nearestDistance) {
       nearestDistance = distance;
       nearestPickup = pickup;
@@ -893,8 +897,8 @@ function updatePickups(delta: number): void {
     message.textContent = `Press E to pick up ${nearestPickup.weapon.name}`;
     message.classList.remove("hidden");
   } else if (state === "playing") {
-    message.textContent = "Outlast the arena";
-    message.classList.toggle("hidden", document.pointerLockElement === renderer.domElement);
+    message.textContent = "Left-click the ground to move";
+    message.classList.remove("hidden");
   }
 }
 
@@ -976,7 +980,7 @@ function tick(): void {
   const delta = Math.min(clock.getDelta(), 0.033);
 
   if (state === "playing") {
-    updateInput(delta);
+    updateMovement(delta);
     updateEnemies(delta);
     updatePickups(delta);
     updateStorm(delta);
@@ -997,7 +1001,6 @@ function resize(): void {
 
 window.addEventListener("resize", resize);
 window.addEventListener("keydown", (event) => {
-  keys.add(event.code);
   if (event.code === "Space") {
     event.preventDefault();
     dash();
@@ -1009,35 +1012,73 @@ window.addEventListener("keydown", (event) => {
     startMatch();
   }
 });
-window.addEventListener("keyup", (event) => {
-  keys.delete(event.code);
+
+renderer.domElement.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
 });
+
+renderer.domElement.addEventListener("mousedown", (event) => {
+  if (state !== "playing") {
+    return;
+  }
+
+  if (event.button === 2) {
+    isCameraRotating = true;
+    cameraRotateStartX = event.clientX;
+    cameraRotateStartY = event.clientY;
+    return;
+  }
+
+  if (event.button !== 0) {
+    return;
+  }
+
+  const groundPoint = getGroundPointFromEvent(event);
+  if (!groundPoint) {
+    return;
+  }
+
+  setMoveDestination(groundPoint);
+});
+
+window.addEventListener("mouseup", (event) => {
+  if (event.button === 2 && isCameraRotating) {
+    isCameraRotating = false;
+  }
+});
+
+renderer.domElement.addEventListener("mouseup", (event) => {
+  if (state !== "playing" || event.button !== 2) {
+    return;
+  }
+
+  const dragDistance = Math.hypot(
+    event.clientX - cameraRotateStartX,
+    event.clientY - cameraRotateStartY,
+  );
+  isCameraRotating = false;
+
+  if (dragDistance > 6) {
+    return;
+  }
+
+  const groundPoint = getGroundPointFromEvent(event);
+  if (groundPoint) {
+    faceTowardGroundPoint(groundPoint);
+    attack();
+  }
+});
+
 window.addEventListener("mousemove", (event) => {
-  if (document.pointerLockElement !== renderer.domElement) {
+  if (!isCameraRotating) {
     return;
   }
   cameraYaw -= event.movementX * 0.0022;
   cameraPitch -= event.movementY * 0.0014;
 });
-window.addEventListener("mousedown", (event) => {
-  if (event.button !== 0) {
-    return;
-  }
-  if (state === "playing") {
-    if (document.pointerLockElement !== renderer.domElement) {
-      renderer.domElement.requestPointerLock().catch(() => undefined);
-    }
-    attack();
-  }
-});
 
 startButton.addEventListener("click", startMatch);
 restartButton.addEventListener("click", startMatch);
-renderer.domElement.addEventListener("click", () => {
-  if (state === "playing" && document.pointerLockElement !== renderer.domElement) {
-    renderer.domElement.requestPointerLock().catch(() => undefined);
-  }
-});
 
 addProps();
 snapToGround(player);
