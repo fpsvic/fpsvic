@@ -160,7 +160,7 @@ hud.innerHTML = `
       <div><kbd>RMB</kbd> move to point</div>
       <div><kbd>Drag LMB</kbd> rotate camera</div>
       <div><kbd>A</kbd> slash / hold 2s charge</div>
-      <div><kbd>Space</kbd> dash</div>
+      <div><kbd>Space</kbd> jump</div>
       <div><kbd>E</kbd> pick up</div>
       <div><kbd>R</kbd> restart</div>
     </div>
@@ -191,7 +191,7 @@ hud.innerHTML = `
       <ul class="title-screen__features">
         <li>Right-click to move</li>
         <li>Hold <kbd>A</kbd> to charge slashes</li>
-        <li>Shrinking storm ring</li>
+        <li>Space to jump · shrinking storm</li>
       </ul>
       <button class="title-screen__cta" type="button" data-start-button>
         <span class="title-screen__cta-text">Enter the Arena</span>
@@ -349,7 +349,10 @@ let equippedWeaponIndex = 0;
 let attackCooldown = 0;
 let attackTime = 0;
 let attackAnimDuration = 0.26;
-let dashCooldown = 0;
+let verticalVelocity = 0;
+let isGrounded = true;
+const JUMP_VELOCITY = 8.6;
+const GRAVITY = 27;
 let invulnerable = 0;
 let stormRadius = 78;
 let stormTimer = 0;
@@ -409,6 +412,24 @@ function snapToGround(object: THREE.Object3D): void {
   object.position.y = sampleTerrainHeight(object.position.x, object.position.z);
 }
 
+function applyPlayerJumpPhysics(delta: number): void {
+  const groundY = sampleTerrainHeight(player.position.x, player.position.z);
+
+  if (!isGrounded || verticalVelocity > 0.01) {
+    verticalVelocity -= GRAVITY * delta;
+    player.position.y += verticalVelocity * delta;
+
+    if (player.position.y <= groundY) {
+      player.position.y = groundY;
+      verticalVelocity = 0;
+      isGrounded = true;
+    }
+  } else {
+    player.position.y = groundY;
+    isGrounded = true;
+  }
+}
+
 function getGroundPointFromEvent(event: MouseEvent): THREE.Vector3 | null {
   const rect = renderer.domElement.getBoundingClientRect();
   mouseNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -428,14 +449,6 @@ function setMoveDestination(point: THREE.Vector3): void {
 function clearMoveDestination(): void {
   hasMoveTarget = false;
   moveMarker.visible = false;
-}
-
-function faceTowardGroundPoint(point: THREE.Vector3): void {
-  tempVectorTwo.set(point.x - player.position.x, 0, point.z - player.position.z);
-  if (tempVectorTwo.lengthSq() > 0.0004) {
-    playerDirection.copy(tempVectorTwo.normalize());
-    player.rotation.y = Math.atan2(playerDirection.x, playerDirection.z);
-  }
 }
 
 function setPlayerFacingFromCamera(): void {
@@ -649,7 +662,8 @@ function spawnMatch(): void {
   score = 0;
   attackCooldown = 0;
   attackTime = 0;
-  dashCooldown = 0;
+  verticalVelocity = 0;
+  isGrounded = true;
   invulnerable = 0;
   stormRadius = 78;
   stormTimer = 0;
@@ -876,7 +890,7 @@ function updateMovement(delta: number): void {
   }
 
   player.rotation.y = Math.atan2(playerDirection.x, playerDirection.z);
-  snapToGround(player);
+  applyPlayerJumpPhysics(delta);
   const swingPhase =
     attackTime > 0 ? 1 - attackTime / Math.max(attackAnimDuration, 0.001) : 0;
   const chargeRatio = THREE.MathUtils.clamp(attackChargeTime / ATTACK_CHARGE_TIME, 0, 1);
@@ -897,29 +911,16 @@ function updateMovement(delta: number): void {
     animateHumanoid(playerHumanoid, moveSpeed, headBobPhase, 0);
   }
 
-  if (dashCooldown > 0) {
-    dashCooldown -= delta;
-  }
 }
 
-function dash(): void {
-  if (state !== "playing" || dashCooldown > 0) {
+function jump(): void {
+  if (state !== "playing" || !isGrounded) {
     return;
   }
 
-  if (hasMoveTarget) {
-    faceTowardGroundPoint(moveTarget);
-  }
-
-  player.position.addScaledVector(playerDirection, 4.2);
-  if (hasMoveTarget) {
-    moveTarget.copy(player.position);
-    moveMarker.position.set(moveTarget.x, moveTarget.y + 0.12, moveTarget.z);
-  }
-  dashCooldown = 1.35;
-  invulnerable = Math.max(invulnerable, 0.22);
-  cameraShakeDecay = 0.28;
-  snapToGround(player);
+  verticalVelocity = JUMP_VELOCITY;
+  isGrounded = false;
+  cameraShakeDecay = Math.max(cameraShakeDecay, 0.06);
 }
 
 function updateCamera(delta: number): void {
@@ -1154,7 +1155,9 @@ function tick(): void {
     if (attackTime > 0) {
       updateSlashEffects(delta);
     }
-    updateCamera(delta);
+    if (isCameraRotating || cameraShakeDecay > 0 || tickFrame % 2 === 0) {
+      updateCamera(delta);
+    }
     if (tickFrame % 3 === 0) {
       updateHud();
     }
@@ -1184,7 +1187,7 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.code === "Space") {
     event.preventDefault();
-    dash();
+    jump();
   }
   if (event.code === "KeyA") {
     event.preventDefault();

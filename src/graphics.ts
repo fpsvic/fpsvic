@@ -72,7 +72,7 @@ export function createBlobShadowTexture(): THREE.CanvasTexture {
 }
 
 export function addSkyDome(scene: THREE.Scene): THREE.Color {
-  const geometry = new THREE.SphereGeometry(240, 12, 6);
+  const geometry = new THREE.SphereGeometry(240, 10, 5);
   const colors = new Float32Array(geometry.attributes.position.count * 3);
   const zenith = new THREE.Color(0x3d6a9e);
   const horizon = new THREE.Color(0xa8c4e0);
@@ -128,12 +128,8 @@ export function addSkyDome(scene: THREE.Scene): THREE.Color {
 }
 
 export function setupLighting(scene: THREE.Scene): void {
-  scene.add(new THREE.AmbientLight(0x8aa8c4, 0.22));
-  scene.add(new THREE.HemisphereLight(0xc8e4ff, 0x3d5c32, 0.62));
-  const sun = new THREE.DirectionalLight(0xfff0d4, 1.35);
+  scene.add(new THREE.HemisphereLight(0xc8e4ff, 0x3d5c32, 0.72));
+  const sun = new THREE.DirectionalLight(0xfff0d4, 1.4);
   sun.position.set(52, 68, 28);
   scene.add(sun);
-  const fill = new THREE.DirectionalLight(0x9ec8ff, 0.28);
-  fill.position.set(-36, 24, -42);
-  scene.add(fill);
 }
