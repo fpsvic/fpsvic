@@ -1,0 +1,29 @@
+{
+  "name": "fpsvic",
+  "version": "1.0.0",
+  "description": "A browser-based 3D melee arena battle game prototype.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fpsvic/fpsvic.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/fpsvic/fpsvic/issues"
+  },
+  "homepage": "https://github.com/fpsvic/fpsvic#readme",
+  "dependencies": {
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14"
+  }
+}
