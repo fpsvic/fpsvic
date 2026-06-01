@@ -73,8 +73,10 @@ function buildTerrainGeometry(): THREE.BufferGeometry {
   const positions = geometry.attributes.position;
   const colors = new Float32Array(positions.count * 3);
   const color = new THREE.Color();
-  const grass = new THREE.Color(0x4a7a48);
+  const grassLow = new THREE.Color(0x3f6f3e);
+  const grassHigh = new THREE.Color(0x5f8f52);
   const path = new THREE.Color(0xc4aa7a);
+  const rock = new THREE.Color(0x6a7268);
 
   for (let index = 0; index < positions.count; index += 1) {
     const x = positions.getX(index);
@@ -86,9 +88,11 @@ function buildTerrainGeometry(): THREE.BufferGeometry {
     const pathMask =
       THREE.MathUtils.smoothstep(dist, 5, 18) *
       (1 - THREE.MathUtils.smoothstep(dist, 18, 32));
+    const heightBlend = THREE.MathUtils.clamp(height / 2.4, 0, 1);
 
-    color.copy(grass);
+    color.copy(grassLow).lerp(grassHigh, heightBlend);
     color.lerp(path, pathMask * 0.85);
+    color.lerp(rock, heightBlend * 0.22);
 
     colors[index * 3] = color.r;
     colors[index * 3 + 1] = color.g;

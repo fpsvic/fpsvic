@@ -31,9 +31,11 @@ export function createGroundColorTexture(): THREE.CanvasTexture {
       const n =
         Math.sin(nx * 24) * Math.cos(ny * 26) * 0.5 + Math.sin(nx * 58 + ny * 11) * 0.25 + 0.5;
       const index = (y * size + x) * 4;
-      image.data[index] = Math.floor(48 + n * 75);
-      image.data[index + 1] = Math.floor(82 + n * 95);
-      image.data[index + 2] = Math.floor(36 + n * 38);
+      image.data[index] = Math.floor(42 + n * 68);
+      image.data[index + 1] = Math.floor(76 + n * 88);
+      image.data[index + 2] = Math.floor(32 + n * 42);
+      const moss = Math.sin(nx * 40 + ny * 33) > 0.62 ? 8 : 0;
+      image.data[index + 1] = Math.min(255, image.data[index + 1] + moss);
       image.data[index + 3] = 255;
     }
   }
@@ -70,17 +72,40 @@ export function createBlobShadowTexture(): THREE.CanvasTexture {
 }
 
 export function addSkyDome(scene: THREE.Scene): THREE.Color {
-  const geometry = new THREE.SphereGeometry(240, 8, 4);
+  const geometry = new THREE.SphereGeometry(240, 12, 6);
   const colors = new Float32Array(geometry.attributes.position.count * 3);
-  const zenith = new THREE.Color(0x4a72a8);
-  const horizon = new THREE.Color(0x9eb4d0);
+  const zenith = new THREE.Color(0x3d6a9e);
+  const horizon = new THREE.Color(0xa8c4e0);
+  const haze = new THREE.Color(0xc8dce8);
+  const mountain = new THREE.Color(0x2e3f4c);
+  const forestSilhouette = new THREE.Color(0x1f3428);
   const vertex = new THREE.Vector3();
   const color = new THREE.Color();
 
   for (let index = 0; index < geometry.attributes.position.count; index += 1) {
     vertex.fromBufferAttribute(geometry.attributes.position, index);
     const t = THREE.MathUtils.clamp(vertex.y / 240 + 0.02, 0, 1);
-    color.copy(horizon).lerp(zenith, Math.pow(t, 0.8));
+    color.copy(horizon).lerp(zenith, Math.pow(t, 0.85));
+    if (t < 0.42) {
+      color.lerp(haze, (0.42 - t) * 0.55);
+    }
+
+    const azimuth = Math.atan2(vertex.x, vertex.z);
+    const ridge =
+      Math.sin(azimuth * 3.2) * 0.42 +
+      Math.sin(azimuth * 7.1 + 1.4) * 0.24 +
+      Math.sin(azimuth * 11.5 + 2.1) * 0.14 +
+      0.52;
+    const elevation = THREE.MathUtils.clamp(1 - Math.abs(vertex.y) / 52, 0, 1);
+    const mountainMask = elevation * THREE.MathUtils.smoothstep(ridge, 0.38, 0.92);
+
+    if (vertex.y < 36) {
+      color.lerp(mountain, mountainMask * 0.82);
+      if (vertex.y < 18) {
+        color.lerp(forestSilhouette, mountainMask * 0.28 * (1 - t));
+      }
+    }
+
     colors[index * 3] = color.r;
     colors[index * 3 + 1] = color.g;
     colors[index * 3 + 2] = color.b;
@@ -103,8 +128,12 @@ export function addSkyDome(scene: THREE.Scene): THREE.Color {
 }
 
 export function setupLighting(scene: THREE.Scene): void {
-  scene.add(new THREE.HemisphereLight(0xb8dcff, 0x3f5a36, 0.7));
-  const sun = new THREE.DirectionalLight(0xfff2dc, 1.45);
-  sun.position.set(48, 62, 24);
+  scene.add(new THREE.AmbientLight(0x8aa8c4, 0.22));
+  scene.add(new THREE.HemisphereLight(0xc8e4ff, 0x3d5c32, 0.62));
+  const sun = new THREE.DirectionalLight(0xfff0d4, 1.35);
+  sun.position.set(52, 68, 28);
   scene.add(sun);
+  const fill = new THREE.DirectionalLight(0x9ec8ff, 0.28);
+  fill.position.set(-36, 24, -42);
+  scene.add(fill);
 }

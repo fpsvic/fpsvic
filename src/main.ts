@@ -9,6 +9,7 @@ import {
 import { addSkyDome, configureRenderer, setupLighting } from "./graphics";
 import { animateLightFighter, createLightFighter, type LightFighter } from "./lightFighter";
 import { ArenaMinimap } from "./minimap";
+import { createBackdropScenery } from "./scenery";
 import { ARENA_RADIUS, createArenaTerrain, sampleTerrainHeight } from "./terrain";
 import "./styles.css";
 
@@ -120,7 +121,7 @@ const camera = new THREE.PerspectiveCamera(
   58,
   window.innerWidth / window.innerHeight,
   0.1,
-  200,
+  260,
 );
 const renderer = new THREE.WebGLRenderer({
   antialias: false,
@@ -133,7 +134,7 @@ app.appendChild(renderer.domElement);
 
 const horizonColor = addSkyDome(scene);
 scene.background = horizonColor.clone();
-scene.fog = new THREE.FogExp2(horizonColor.getHex(), 0.0072);
+scene.fog = new THREE.Fog(horizonColor.getHex(), 48, 215);
 setupLighting(scene);
 
 const hud = document.createElement("div");
@@ -254,13 +255,19 @@ const sharedGeometries = {
   weaponBlade: new THREE.BoxGeometry(1, 0.1, 0.16),
   weaponTip: new THREE.ConeGeometry(0.14, 0.28, 4),
   rock: new THREE.DodecahedronGeometry(1, 0),
-  tree: new THREE.ConeGeometry(1.1, 2.6, 5),
+  treeFoliage: new THREE.ConeGeometry(1.05, 2.4, 5),
+  treeTrunk: new THREE.CylinderGeometry(0.16, 0.22, 1.1, 4),
   pickupPlatform: new THREE.CylinderGeometry(0.78, 0.92, 0.18, 8),
   slashRing: new THREE.RingGeometry(0.42, 1, 12, 1, -0.55, 1.1),
 };
 
 const stoneMaterial = new THREE.MeshLambertMaterial({ color: 0x7a8088 });
-const treeMaterial = new THREE.MeshLambertMaterial({ color: 0x3f6a42 });
+const treeTrunkMaterial = new THREE.MeshLambertMaterial({ color: 0x4a3528 });
+const treeFoliageMaterial = new THREE.MeshLambertMaterial({
+  color: 0x356840,
+  emissive: new THREE.Color(0x142818),
+  emissiveIntensity: 0.06,
+});
 const playerPalette: HumanoidPalette = {
   skin: new THREE.MeshLambertMaterial({ color: 0xe8b896 }),
   shirt: new THREE.MeshLambertMaterial({ color: 0x4a5e6a }),
@@ -293,6 +300,7 @@ const enemyFighterMaterials = {
 
 const arenaTerrain = createArenaTerrain();
 world.add(arenaTerrain.mesh);
+scene.add(createBackdropScenery());
 
 const moveMarker = new THREE.Mesh(
   new THREE.RingGeometry(0.32, 0.52, 16),
@@ -587,25 +595,40 @@ function addProps(): void {
   rocks.instanceMatrix.needsUpdate = true;
   props.add(rocks);
 
-  const treeCount = 4;
-  const trees = new THREE.InstancedMesh(sharedGeometries.tree, treeMaterial, treeCount);
+  const treeCount = 6;
+  const trunks = new THREE.InstancedMesh(
+    sharedGeometries.treeTrunk,
+    treeTrunkMaterial,
+    treeCount,
+  );
+  const foliage = new THREE.InstancedMesh(
+    sharedGeometries.treeFoliage,
+    treeFoliageMaterial,
+    treeCount,
+  );
 
   for (let index = 0; index < treeCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
-    const radius = 24 + Math.random() * 62;
+    const radius = 30 + Math.random() * 48;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
-    const scale = 0.85 + Math.random() * 0.35;
+    const scale = 0.8 + Math.random() * 0.35;
     const groundY = sampleTerrainHeight(x, z);
+    const yaw = Math.random() * Math.PI * 2;
 
-    dummy.position.set(x, groundY + 1.3 * scale, z);
-    dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
-    dummy.scale.set(scale, scale * 1.25, scale);
+    dummy.position.set(x, groundY + 0.55 * scale, z);
+    dummy.rotation.set(0, yaw, 0);
+    dummy.scale.set(scale, scale, scale);
     dummy.updateMatrix();
-    trees.setMatrixAt(index, dummy.matrix);
+    trunks.setMatrixAt(index, dummy.matrix);
+
+    dummy.position.set(x, groundY + 1.35 * scale, z);
+    dummy.updateMatrix();
+    foliage.setMatrixAt(index, dummy.matrix);
   }
-  trees.instanceMatrix.needsUpdate = true;
-  props.add(trees);
+  trunks.instanceMatrix.needsUpdate = true;
+  foliage.instanceMatrix.needsUpdate = true;
+  props.add(trunks, foliage);
 }
 
 function spawnMatch(): void {
