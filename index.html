@@ -4,9 +4,53 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Blade Drop Arena</title>
+    <style>
+      .boot-fallback {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        color: #f7fbff;
+        background: radial-gradient(circle at top, #153554, #071321 62%);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        text-align: center;
+      }
+
+      .boot-fallback__card {
+        max-width: 520px;
+        padding: 28px;
+        border: 1px solid rgb(255 255 255 / 16%);
+        border-radius: 24px;
+        background: rgb(5 13 23 / 72%);
+        box-shadow: 0 18px 50px rgb(0 0 0 / 28%);
+      }
+
+      .boot-fallback h1 {
+        margin: 0 0 10px;
+        font-size: clamp(36px, 8vw, 64px);
+        line-height: 0.95;
+        text-transform: uppercase;
+      }
+
+      .boot-fallback p {
+        margin: 0;
+        color: #c5d8ea;
+        line-height: 1.5;
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div id="boot-fallback" class="boot-fallback">
+        <div class="boot-fallback__card">
+          <h1>Blade Drop Arena</h1>
+          <p>Loading the 3D arena. If this stays on screen, make sure the preview is opened on port 3000 and WebGL is enabled.</p>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

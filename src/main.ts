@@ -144,6 +144,7 @@ hud.innerHTML = `
   </div>
 `;
 app.appendChild(hud);
+document.querySelector("#boot-fallback")?.remove();
 
 function requireHudElement<T extends HTMLElement>(selector: string): T {
   const element = hud.querySelector<T>(selector);
@@ -516,10 +517,17 @@ function setState(nextState: GameState): void {
   message.classList.toggle("hidden", nextState !== "playing");
 }
 
+function requestAimLock(onError?: () => void): void {
+  const lockResult = renderer.domElement.requestPointerLock() as Promise<void> | void;
+  if (lockResult) {
+    lockResult.catch(() => onError?.());
+  }
+}
+
 function startMatch(): void {
   spawnMatch();
   setState("playing");
-  renderer.domElement.requestPointerLock().catch(() => {
+  requestAimLock(() => {
     message.textContent = "Click the arena to lock aim";
   });
 }
@@ -844,7 +852,7 @@ window.addEventListener("mousedown", (event) => {
   }
   if (state === "playing") {
     if (document.pointerLockElement !== renderer.domElement) {
-      renderer.domElement.requestPointerLock().catch(() => undefined);
+      requestAimLock();
     }
     attack();
   }
@@ -854,7 +862,7 @@ startButton.addEventListener("click", startMatch);
 restartButton.addEventListener("click", startMatch);
 renderer.domElement.addEventListener("click", () => {
   if (state === "playing" && document.pointerLockElement !== renderer.domElement) {
-    renderer.domElement.requestPointerLock().catch(() => undefined);
+    requestAimLock();
   }
 });
 

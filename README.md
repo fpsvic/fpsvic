@@ -26,7 +26,9 @@ npm install
 npm run dev
 ```
 
-The dev and preview scripts bind to `0.0.0.0`, and Vite is configured to allow hosted preview domains.
+The dev and preview scripts bind to `0.0.0.0` on port `3000`, and Vite is configured to allow hosted preview domains.
+
+If the terminal is already showing `VITE ready`, leave that process running and open the preview for port `3000`. To run another command in the same terminal, stop Vite first with `Ctrl+C`.
 
 Create a production build with:
 
