@@ -11,7 +11,6 @@ export type HumanoidRig = {
   root: THREE.Group;
   hips: THREE.Group;
   torso: THREE.Mesh;
-  chest: THREE.Mesh;
   head: THREE.Mesh;
   leftArm: THREE.Group;
   rightArm: THREE.Group;
@@ -21,14 +20,13 @@ export type HumanoidRig = {
 };
 
 const limbGeometries = {
-  torso: new THREE.BoxGeometry(0.46, 0.56, 0.24),
-  chest: new THREE.BoxGeometry(0.5, 0.2, 0.28),
-  head: new THREE.SphereGeometry(0.135, 10, 8),
-  neck: new THREE.CylinderGeometry(0.055, 0.065, 0.11, 6),
-  upperArm: new THREE.CylinderGeometry(0.052, 0.06, 0.33, 6),
-  lowerArm: new THREE.CylinderGeometry(0.042, 0.048, 0.28, 6),
-  upperLeg: new THREE.CylinderGeometry(0.072, 0.082, 0.42, 6),
-  lowerLeg: new THREE.CylinderGeometry(0.062, 0.052, 0.38, 6),
+  torso: new THREE.BoxGeometry(0.46, 0.72, 0.24),
+  head: new THREE.SphereGeometry(0.135, 6, 5),
+  neck: new THREE.CylinderGeometry(0.055, 0.065, 0.11, 5),
+  upperArm: new THREE.CylinderGeometry(0.052, 0.06, 0.33, 5),
+  lowerArm: new THREE.CylinderGeometry(0.042, 0.048, 0.28, 5),
+  upperLeg: new THREE.CylinderGeometry(0.072, 0.082, 0.42, 5),
+  lowerLeg: new THREE.CylinderGeometry(0.062, 0.052, 0.38, 5),
   foot: new THREE.BoxGeometry(0.11, 0.055, 0.24),
   hand: new THREE.BoxGeometry(0.07, 0.05, 0.08),
 };
@@ -43,7 +41,6 @@ function addMesh(
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.copy(position);
   mesh.castShadow = castShadow;
-  mesh.receiveShadow = true;
   parent.add(mesh);
   return mesh;
 }
@@ -145,18 +142,11 @@ export function createHumanoid(
     hips,
     limbGeometries.torso,
     palette.shirt,
-    new THREE.Vector3(0, 1.12, 0),
-    castShadow,
-  );
-  const chest = addMesh(
-    hips,
-    limbGeometries.chest,
-    palette.shirt,
-    new THREE.Vector3(0, 1.48, 0),
+    new THREE.Vector3(0, 1.18, 0),
     castShadow,
   );
 
-  addMesh(hips, limbGeometries.neck, palette.skin, new THREE.Vector3(0, 1.62, 0), castShadow);
+  addMesh(hips, limbGeometries.neck, palette.skin, new THREE.Vector3(0, 1.58, 0), castShadow);
   const head = addMesh(
     hips,
     limbGeometries.head,
@@ -174,7 +164,6 @@ export function createHumanoid(
     root,
     hips,
     torso,
-    chest,
     head,
     leftArm: leftArmData.arm,
     rightArm: rightArmData.arm,
@@ -195,8 +184,7 @@ export function applyAttackPose(
   const wind = chargeRatio * (charged ? 1.15 : 1);
   const power = charged ? 1.35 : 1;
 
-  rig.torso.rotation.x = -0.12 - sweep * 0.62 * power - wind * 0.38;
-  rig.chest.rotation.x = -wind * 0.22 - sweep * 0.15;
+  rig.torso.rotation.x = -0.12 - sweep * 0.72 * power - wind * 0.48;
   rig.rightArm.rotation.x = -0.45 - sweep * 2.35 * power - wind * 1.05;
   rig.leftArm.rotation.x = sweep * 0.35 + wind * 0.12;
 
@@ -217,7 +205,6 @@ export function animateHumanoid(
 ): void {
   rig.hips.position.z = 0;
   rig.torso.rotation.x = 0;
-  rig.chest.rotation.x = 0;
 
   const moveAmount = THREE.MathUtils.clamp(speed / 5.5, 0, 1);
   const stride = Math.sin(phase) * 0.55 * moveAmount;
@@ -240,8 +227,7 @@ export function animateHumanoid(
 
   const bob = Math.abs(Math.sin(phase * 2)) * 0.035 * moveAmount;
   rig.hips.position.y = 0.02 + bob;
-  rig.torso.rotation.x = bob * 0.35;
-  rig.chest.rotation.x = bob * 0.2;
+  rig.torso.rotation.x = bob * 0.45;
   rig.head.position.y = 1.78 + bob * 0.25;
 }
 
@@ -250,7 +236,7 @@ export function setHumanoidFlash(
   palette: HumanoidPalette,
   flashing: boolean,
 ): void {
-  const shirt = palette.shirt as THREE.MeshStandardMaterial;
+  const shirt = palette.shirt as THREE.MeshLambertMaterial;
   shirt.transparent = flashing;
   shirt.opacity = flashing ? 0.55 : 1;
   if (!flashing) {

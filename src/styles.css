@@ -207,7 +207,6 @@ canvas {
     radial-gradient(ellipse 70% 55% at 82% 72%, rgb(184 255 108 / 12%), transparent 52%),
     radial-gradient(ellipse 60% 50% at 12% 78%, rgb(122 90 255 / 14%), transparent 50%),
     linear-gradient(165deg, rgb(4 10 20 / 94%) 0%, rgb(8 18 32 / 88%) 45%, rgb(3 8 16 / 96%) 100%);
-  backdrop-filter: blur(10px);
 }
 
 .title-screen__grid {
