@@ -26,7 +26,7 @@ npm install
 npm run dev
 ```
 
-The dev and preview scripts bind to `0.0.0.0` so hosted preview environments can open the game.
+The dev and preview scripts bind to `0.0.0.0`, and Vite is configured to allow hosted preview domains.
 
 Create a production build with:
 
