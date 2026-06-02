@@ -243,7 +243,12 @@ const sunLight = setupLighting(scene);
 const hud = document.createElement("div");
 hud.className = "hud";
 hud.innerHTML = `
-  <div class="fps-panel hidden" data-fps-panel aria-live="polite">
+  <div
+    class="fps-panel hidden"
+    data-fps-panel
+    aria-live="polite"
+    title="Screen refresh rate (game redraws in background)"
+  >
     FPS: <strong data-fps-value>60</strong>
   </div>
 
@@ -1333,7 +1338,9 @@ function tick(): void {
   const delta = Math.min(clock.getDelta(), 0.05);
   tickFrame += 1;
   const qualityFps =
-    tickFrame < 45 ? 72 : getEffectiveFps(fpsMeter.smoothedFps, fpsMeter.instantFps);
+    tickFrame < 45
+      ? 72
+      : getEffectiveFps(fpsMeter.renderSmoothedFps, fpsMeter.renderInstantFps);
   const effectiveFps = qualityFps;
   const quality = getRenderQuality(effectiveFps);
   const { tuning } = quality;
@@ -1381,7 +1388,7 @@ function tick(): void {
       renderer.shadowMap.needsUpdate = true;
     }
     renderer.render(scene, camera);
-    fpsMeter.endFrame();
+    fpsMeter.endRenderFrame();
     return;
   }
 
@@ -1390,7 +1397,7 @@ function tick(): void {
     renderer.shadowMap.needsUpdate = true;
   }
   renderer.render(scene, camera);
-  fpsMeter.endFrame();
+  fpsMeter.endRenderFrame();
 }
 
 function resize(): void {
@@ -1601,6 +1608,7 @@ function bootGame(): void {
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
+    fpsMeter.stopDisplayTracking();
     renderer.setAnimationLoop(null);
   });
 }
@@ -1612,7 +1620,8 @@ try {
   syncShadowRendering(renderer, sunLight, arenaTerrain.mesh, false);
   syncEnvironmentRendering(scene, false, renderer);
   renderer.render(scene, camera);
-  fpsMeter.endFrame();
+  fpsMeter.endRenderFrame();
+  fpsMeter.startDisplayTracking();
   renderer.setAnimationLoop(tick);
   bootComplete = true;
 } catch (error) {
