@@ -885,6 +885,7 @@ function startMatch(): void {
   }
 
   spawnMatch();
+  fpsMeter.reset();
   setState("playing");
   useDragAim = true;
   isCanvasAiming = false;
@@ -1329,10 +1330,11 @@ function updateHud(): void {
 }
 
 function tick(): void {
-  fpsMeter.beginFrame();
   const delta = Math.min(clock.getDelta(), 0.05);
   tickFrame += 1;
-  const effectiveFps = getEffectiveFps(fpsMeter.smoothedFps, fpsMeter.instantFps);
+  const qualityFps =
+    tickFrame < 45 ? 72 : getEffectiveFps(fpsMeter.smoothedFps, fpsMeter.instantFps);
+  const effectiveFps = qualityFps;
   const quality = getRenderQuality(effectiveFps);
   const { tuning } = quality;
   renderPixelRatio = applyAdaptivePixelRatio(
@@ -1379,6 +1381,7 @@ function tick(): void {
       renderer.shadowMap.needsUpdate = true;
     }
     renderer.render(scene, camera);
+    fpsMeter.endFrame();
     return;
   }
 
@@ -1387,6 +1390,7 @@ function tick(): void {
     renderer.shadowMap.needsUpdate = true;
   }
   renderer.render(scene, camera);
+  fpsMeter.endFrame();
 }
 
 function resize(): void {
@@ -1595,6 +1599,12 @@ function bootGame(): void {
   setState("start");
 }
 
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    renderer.setAnimationLoop(null);
+  });
+}
+
 try {
   resize();
   bootGame();
@@ -1602,6 +1612,7 @@ try {
   syncShadowRendering(renderer, sunLight, arenaTerrain.mesh, false);
   syncEnvironmentRendering(scene, false, renderer);
   renderer.render(scene, camera);
+  fpsMeter.endFrame();
   renderer.setAnimationLoop(tick);
   bootComplete = true;
 } catch (error) {
