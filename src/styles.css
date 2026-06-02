@@ -19,7 +19,16 @@ body {
 
 #app {
   position: relative;
+  width: 100%;
   min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#app canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
 }
 
 #app::after {
@@ -41,6 +50,15 @@ canvas {
   position: fixed;
   inset: 0;
   z-index: 10;
+  pointer-events: none;
+}
+
+.hud--menu .top-bar,
+.hud--menu .weapon-card,
+.hud--menu .bottom-bar,
+.hud--menu .minimap-panel,
+.hud--menu .center-message {
+  visibility: hidden;
   pointer-events: none;
 }
 
@@ -237,7 +255,7 @@ canvas {
     radial-gradient(ellipse 80% 60% at 50% 18%, rgb(86 214 255 / 18%), transparent 58%),
     radial-gradient(ellipse 70% 55% at 82% 72%, rgb(184 255 108 / 12%), transparent 52%),
     radial-gradient(ellipse 60% 50% at 12% 78%, rgb(122 90 255 / 14%), transparent 50%),
-    linear-gradient(165deg, rgb(4 10 20 / 94%) 0%, rgb(8 18 32 / 88%) 45%, rgb(3 8 16 / 96%) 100%);
+    linear-gradient(165deg, rgb(4 10 20 / 97%) 0%, rgb(8 18 32 / 94%) 45%, rgb(3 8 16 / 98%) 100%);
 }
 
 .title-screen__grid {

@@ -300,7 +300,8 @@ const enemyFighterMaterials = {
 
 const arenaTerrain = createArenaTerrain();
 world.add(arenaTerrain.mesh);
-scene.add(createBackdropScenery());
+const backdropScenery = createBackdropScenery();
+scene.add(backdropScenery);
 
 const moveMarker = new THREE.Mesh(
   new THREE.RingGeometry(0.32, 0.52, 16),
@@ -702,6 +703,10 @@ function setState(nextState: GameState): void {
   const showEnd = nextState === "ended";
   const showMessage = nextState === "playing";
   const showMinimap = nextState === "playing";
+  const inMatch = nextState === "playing";
+
+  backdropScenery.visible = inMatch;
+  hud.classList.toggle("hud--menu", showStart || showEnd);
 
   startPanel.classList.toggle("hidden", !showStart);
   startPanel.toggleAttribute("inert", !showStart);
@@ -709,6 +714,10 @@ function setState(nextState: GameState): void {
   endPanel.toggleAttribute("inert", !showEnd);
   message.classList.toggle("hidden", !showMessage);
   minimapPanel.classList.toggle("hidden", !showMinimap);
+
+  if (!inMatch) {
+    setMenuCamera();
+  }
 }
 
 function startMatch(): void {
@@ -923,7 +932,17 @@ function jump(): void {
   cameraShakeDecay = Math.max(cameraShakeDecay, 0.06);
 }
 
+function setMenuCamera(): void {
+  camera.position.set(52, 36, 52);
+  camera.lookAt(0, 5, 0);
+}
+
 function updateCamera(delta: number): void {
+  if (state !== "playing") {
+    setMenuCamera();
+    return;
+  }
+
   cameraPitch = THREE.MathUtils.clamp(cameraPitch, 0.28, 0.82);
   const radius = 7.6;
   const height = 2.8 + cameraPitch * 4.2;
@@ -1165,10 +1184,8 @@ function tick(): void {
     return;
   }
 
-  if (tickFrame % 3 === 0) {
-    updateCamera(delta);
-    renderer.render(scene, camera);
-  }
+  updateCamera(delta);
+  renderer.render(scene, camera);
 }
 
 function resize(): void {
@@ -1289,7 +1306,11 @@ function bootGame(): void {
   }
 
   if (session.state === "playing") {
-    spawnMatch();
+    if (enemies.length === 0) {
+      spawnMatch();
+    }
+  } else if (session.state !== "ended") {
+    session.state = "start";
   }
   setState(session.state);
 }
