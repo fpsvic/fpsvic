@@ -16,7 +16,12 @@ import {
 import { animateLightFighter, createLightFighter, type LightFighter } from "./lightFighter";
 import { FpsMeter } from "./fpsMeter";
 import { ArenaMinimap } from "./minimap";
-import { applyAdaptivePixelRatio, getPerformanceTuning } from "./performance";
+import {
+  applyAdaptivePixelRatio,
+  getRenderQuality,
+  syncShadowRendering,
+  type PerformanceTuning,
+} from "./performance";
 import { createBackdropScenery } from "./scenery";
 import { ARENA_RADIUS, createArenaTerrain, sampleTerrainHeight } from "./terrain";
 import "./styles.css";
@@ -216,7 +221,7 @@ try {
 }
 
 renderer.setSize(initialViewport.width, initialViewport.height);
-let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 1);
+let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 0.85);
 renderer.setPixelRatio(renderPixelRatio);
 configureRenderer(renderer);
 renderer.domElement.classList.add("game-canvas");
@@ -232,7 +237,7 @@ app.appendChild(gameCursor);
 const horizonColor = addSkyDome(scene);
 scene.background = horizonColor.clone();
 scene.fog = new THREE.FogExp2(horizonColor.getHex(), 0.0058);
-setupLighting(scene);
+const sunLight = setupLighting(scene);
 
 const hud = document.createElement("div");
 hud.className = "hud";
@@ -470,7 +475,7 @@ scene.add(stormRing);
 const player = new THREE.Group();
 scene.add(player);
 
-const playerHumanoid = createHumanoid(playerPalette, 1, true);
+const playerHumanoid = createHumanoid(playerPalette, 1, false);
 player.add(playerHumanoid.root);
 
 const playerWeapon = new THREE.Group();
@@ -713,7 +718,7 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
     sharedGeometries.pickupPlatform,
     weaponBladeMaterials[weaponIndex] ?? weaponBladeMaterials[0],
   );
-  platform.castShadow = true;
+  platform.castShadow = false;
   group.add(platform);
 
   const pickupBlade = new THREE.Mesh(
@@ -738,8 +743,8 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
 function addProps(): void {
   const rockCount = 3;
   const rocks = new THREE.InstancedMesh(sharedGeometries.rock, stoneMaterial, rockCount);
-  rocks.castShadow = true;
-  rocks.receiveShadow = true;
+  rocks.castShadow = false;
+  rocks.receiveShadow = false;
 
   for (let index = 0; index < rockCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
@@ -768,7 +773,7 @@ function addProps(): void {
     treeFoliageMaterial,
     treeCount,
   );
-  trunks.castShadow = true;
+  trunks.castShadow = false;
   foliage.castShadow = false;
 
   for (let index = 0; index < treeCount; index += 1) {
@@ -1131,14 +1136,16 @@ function updateCamera(delta: number): void {
   camera.lookAt(cameraTarget);
 }
 
-function updateEnemies(delta: number): void {
-  const enemyPerf = getPerformanceTuning(fpsMeter.smoothedFps);
+function updateEnemies(
+  delta: number,
+  tuning: PerformanceTuning,
+): void {
   for (const enemy of enemies) {
     enemy.cooldown = Math.max(0, enemy.cooldown - delta);
     enemy.stun = Math.max(0, enemy.stun - delta);
 
     const distToPlayer = enemy.group.position.distanceTo(player.position);
-    if (distToPlayer > ENEMY_UPDATE_NEAR && tickFrame % enemyPerf.enemyFarSkipInterval !== 0) {
+    if (distToPlayer > ENEMY_UPDATE_NEAR && tickFrame % tuning.enemyFarSkipInterval !== 0) {
       continue;
     }
 
@@ -1167,8 +1174,12 @@ function updateEnemies(delta: number): void {
     }
 
     snapToGround(enemy.group);
-    if (distToPlayer < 40 && moveSpeed > 0.05 && tickFrame % 2 === 0) {
-      enemy.walkPhase += delta * (4.5 + moveSpeed * 0.55);
+    if (
+      distToPlayer < 40 &&
+      moveSpeed > 0.05 &&
+      tickFrame % tuning.enemyAnimInterval === 0
+    ) {
+      enemy.walkPhase += delta * (4.5 + moveSpeed * 0.55) * tuning.enemyAnimInterval;
       animateLightFighter(enemy.fighter, moveSpeed, enemy.walkPhase);
     }
   }
@@ -1320,19 +1331,30 @@ function tick(): void {
   const delta = Math.min(clock.getDelta(), 0.033);
   tickFrame += 1;
   fpsMeter.sample(delta);
-  renderPixelRatio = applyAdaptivePixelRatio(renderer, fpsMeter.smoothedFps, renderPixelRatio);
-  const perf = getPerformanceTuning(fpsMeter.smoothedFps);
+  const quality = getRenderQuality(fpsMeter.smoothedFps);
+  const { tuning } = quality;
+  renderPixelRatio = applyAdaptivePixelRatio(
+    renderer,
+    quality.pixelRatioCap,
+    renderPixelRatio,
+  );
   const playing = state === "playing";
+  syncShadowRendering(
+    renderer,
+    sunLight,
+    arenaTerrain.mesh,
+    playing && quality.shadowsEnabled,
+  );
 
   if (playing) {
     updateMovement(delta);
     updateWeapon(delta);
-    updateEnemies(delta);
+    updateEnemies(delta, tuning);
     updateStorm(delta);
-    if (tickFrame % perf.pickupFrameInterval === 0) {
+    if (tickFrame % tuning.pickupFrameInterval === 0) {
       updatePickups(delta);
     }
-    if (tickFrame % perf.minimapFrameInterval === 0) {
+    if (tickFrame % tuning.minimapFrameInterval === 0) {
       updateMinimap();
     }
     if (attackTime > 0) {
@@ -1343,14 +1365,14 @@ function tick(): void {
       cameraShakeDecay > 0 ||
       hasMoveTarget ||
       attackTime > 0 ||
-      tickFrame % 2 === 0;
+      tickFrame % tuning.cameraIdleInterval === 0;
     if (needsSmoothCamera) {
       updateCamera(delta);
     }
-    if (tickFrame % perf.hudFrameInterval === 0) {
+    if (tickFrame % tuning.hudFrameInterval === 0) {
       updateHud();
     }
-    if (tickFrame % perf.shadowFrameInterval === 0) {
+    if (quality.shadowsEnabled && tickFrame % tuning.shadowFrameInterval === 0) {
       renderer.shadowMap.needsUpdate = true;
     }
     renderer.render(scene, camera);
@@ -1358,7 +1380,7 @@ function tick(): void {
   }
 
   updateCamera(delta);
-  if (tickFrame % perf.shadowFrameInterval === 0) {
+  if (quality.shadowsEnabled && tickFrame % tuning.shadowFrameInterval === 0) {
     renderer.shadowMap.needsUpdate = true;
   }
   renderer.render(scene, camera);

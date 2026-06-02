@@ -23,12 +23,12 @@ export function createLightFighter(
 
   const body = new THREE.Mesh(bodyGeometry, materials.body);
   body.position.y = 0.92 * scale;
-  body.castShadow = true;
+  body.castShadow = false;
   root.add(body);
 
   const head = new THREE.Mesh(headGeometry, materials.head);
   head.position.y = 1.62 * scale;
-  head.castShadow = true;
+  head.castShadow = false;
   root.add(head);
 
   return { root, body, head };
