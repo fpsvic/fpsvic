@@ -1,0 +1,15 @@
+{
+  "name": "Blade Arena",
+  "install": "npm install",
+  "terminals": [
+    {
+      "name": "Blade Arena dev",
+      "command": "npm run dev",
+      "ports": [5173]
+    },
+    {
+      "name": "Open in Desktop browser",
+      "command": "bash .cursor/open-desktop-game.sh"
+    }
+  ]
+}
