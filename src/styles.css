@@ -23,6 +23,17 @@ body {
   min-height: 100vh;
   height: 100vh;
   overflow: hidden;
+  background: #071321;
+}
+
+#app > canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
 }
 
 .hud {
@@ -30,6 +41,11 @@ body {
   inset: 0;
   z-index: 10;
   pointer-events: none;
+}
+
+.hud--playing .start-panel,
+.hud--playing .end-panel {
+  display: none;
 }
 
 .top-bar,
@@ -259,9 +275,13 @@ body {
   display: none;
 }
 
-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-  touch-action: none;
+.boot-error {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-content: center;
+  padding: 24px;
+  color: #f7fbff;
+  text-align: center;
 }

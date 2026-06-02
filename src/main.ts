@@ -105,7 +105,7 @@ const weapons: Weapon[] = [
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x071321);
-scene.fog = new THREE.FogExp2(0x071321, 0.021);
+scene.fog = new THREE.FogExp2(0x0a1a2e, 0.0085);
 
 const camera = new THREE.PerspectiveCamera(
   60,
@@ -113,12 +113,19 @@ const camera = new THREE.PerspectiveCamera(
   0.1,
   500,
 );
-const renderer = new THREE.WebGLRenderer({
-  antialias: false,
-  powerPreference: "high-performance",
-});
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+let renderer: THREE.WebGLRenderer;
+try {
+  renderer = new THREE.WebGLRenderer({
+    antialias: false,
+    powerPreference: "high-performance",
+    alpha: false,
+  });
+} catch (error) {
+  app.innerHTML = `<div class="boot-error"><h2>WebGL required</h2><p>${String(error)}</p></div>`;
+  throw error;
+}
+renderer.setClearColor(0x071321);
+renderer.domElement.setAttribute("aria-label", "Blade Drop Arena 3D view");
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.shadowMap.autoUpdate = false;
@@ -497,7 +504,8 @@ const weaponDisplayMeshes = weapons.map((weapon) => createWeaponMesh(weapon));
 function equipWeapon(weapon: Weapon): void {
   equippedWeapon = weapon;
   playerWeapon.clear();
-  const mesh = weaponDisplayMeshes[getWeaponIndex(weapon)] ?? weaponDisplayMeshes[0];
+  const template = weaponDisplayMeshes[getWeaponIndex(weapon)] ?? weaponDisplayMeshes[0];
+  const mesh = template.clone(true);
   mesh.rotation.z = -0.15;
   playerWeapon.add(mesh);
   weaponNameText.textContent = weapon.name;
@@ -670,11 +678,25 @@ function spawnMatch(): void {
   }
 }
 
+function getViewportSize(): { width: number; height: number } {
+  const rect = app!.getBoundingClientRect();
+  return {
+    width: Math.max(1, Math.floor(rect.width) || window.innerWidth || 320),
+    height: Math.max(1, Math.floor(rect.height) || window.innerHeight || 240),
+  };
+}
+
 function setState(nextState: GameState): void {
   state = nextState;
   startPanel.classList.toggle("hidden", nextState !== "start");
   endPanel.classList.toggle("hidden", nextState !== "ended");
   message.classList.toggle("hidden", nextState !== "playing");
+  hud.classList.toggle("hud--playing", nextState === "playing");
+  if (nextState === "playing") {
+    resize();
+    snapGameplayCamera();
+    sun.shadow.needsUpdate = true;
+  }
 }
 
 function isPointerLocked(): boolean {
@@ -689,8 +711,27 @@ function requestGamePointerLock(): void {
   });
 }
 
+function setMenuCamera(): void {
+  camera.position.set(52, 38, 52);
+  camera.lookAt(0, 1.2, 0);
+}
+
+function snapGameplayCamera(): void {
+  cameraPitch = THREE.MathUtils.clamp(cameraPitch, 0.35, 0.72);
+  const radius = 8.4;
+  const height = 3.2 + cameraPitch * 4.5;
+  cameraTarget.copy(player.position).add(new THREE.Vector3(0, 1.45, 0));
+  camera.position.set(
+    player.position.x - Math.sin(cameraYaw) * radius,
+    player.position.y + height,
+    player.position.z - Math.cos(cameraYaw) * radius,
+  );
+  camera.lookAt(cameraTarget);
+}
+
 function startMatch(): void {
   spawnMatch();
+  snapGameplayCamera();
   setState("playing");
   useDragAim = false;
   isCanvasAiming = false;
@@ -844,6 +885,11 @@ function dash(): void {
 }
 
 function updateCamera(delta: number): void {
+  if (state !== "playing") {
+    setMenuCamera();
+    return;
+  }
+
   cameraPitch = THREE.MathUtils.clamp(cameraPitch, 0.22, 0.95);
   const radius = 8.4;
   const height = 3.2 + cameraPitch * 4.5;
@@ -1098,13 +1144,23 @@ function animate(): void {
 }
 
 function resize(): void {
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const { width, height } = getViewportSize();
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
   renderer.setPixelRatio(renderPixelRatio);
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(width, height, false);
 }
 
 window.addEventListener("resize", resize);
+if (typeof ResizeObserver !== "undefined") {
+  const viewportObserver = new ResizeObserver(() => resize());
+  viewportObserver.observe(app);
+}
+renderer.domElement.addEventListener("webglcontextlost", (event) => {
+  event.preventDefault();
+  message.textContent = "WebGL context lost — refresh the page";
+  message.classList.remove("hidden");
+});
 document.addEventListener("visibilitychange", () => {
   isPageVisible = document.visibilityState === "visible";
 });
@@ -1184,6 +1240,9 @@ renderer.domElement.addEventListener("click", () => {
 
 addProps();
 equipWeapon(equippedWeapon);
+resize();
 setState("start");
-updateCamera(1);
+setMenuCamera();
+sun.shadow.needsUpdate = true;
+renderer.render(scene, camera);
 animate();
