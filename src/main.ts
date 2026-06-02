@@ -116,8 +116,8 @@ function showBootError(error: unknown): void {
   panel.innerHTML = `
     <h2>Blade Arena could not start</h2>
     <p>${detail.replace(/</g, "&lt;")}</p>
-    <p>Run <code>npm run dev</code> and open <strong>http://localhost:5173/</strong></p>
-    <p>If the Desktop pane looks stuck, hard-refresh the preview.</p>
+    <p>Run <code>npm run dev</code>, open <strong>Chrome</strong> on the Desktop taskbar, then go to <strong>http://localhost:5173/</strong></p>
+    <p>The Desktop tab is the VM desktop (wallpaper), not the game embedded in the pane.</p>
   `;
   app.replaceChildren(panel);
 }

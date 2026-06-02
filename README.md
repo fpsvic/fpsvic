@@ -26,6 +26,12 @@ npm install
 npm run dev
 ```
 
+Open **http://localhost:5173/** in your browser.
+
+### Cursor Cloud Desktop tab
+
+The **Desktop** pane shows the VM’s Linux desktop (wallpaper and taskbar), not the game inline. Click **Chrome** on the taskbar and open **http://localhost:5173/**. With `.cursor/environment.json`, the dev server and browser launch are started automatically in agent VMs.
+
 Create a production build with:
 
 ```bash

@@ -15,10 +15,15 @@
 
 ### Desktop preview
 
-1. Run `npm run dev` and open **http://localhost:5173/** in the Desktop pane (not an old port).
-2. You should see **Loading…** then the **Blade Arena** title over the arena.
-3. Click **Enter the Arena**. Mountains/forests only show during a match.
-4. If the cursor does not lock, **drag on the canvas** to aim; **right-click** to move.
+The **Desktop** tab is a full Linux desktop (wallpaper + taskbar), **not** an embedded game view. The mountain wallpaper is the VM background — the game runs **inside Chrome**.
+
+1. Ensure the dev server is running: `npm run dev` (or use repo `.cursor/environment.json` terminals, which start it automatically).
+2. Open **Google Chrome** on the Desktop taskbar (bottom of the pane).
+3. Go to **http://localhost:5173/** (or **http://127.0.0.1:5173/**).
+4. You should see **Loading…** then the **Blade Arena** title over the arena → **Enter the Arena**.
+5. If the cursor does not lock, **drag on the canvas** to aim; **right-click** to move.
+
+After environment setup, a terminal may auto-launch Chrome to that URL once Vite is ready.
 
 ### Gotchas
 
