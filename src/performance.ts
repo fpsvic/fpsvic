@@ -1,4 +1,8 @@
 import type * as THREE from "three";
+import {
+  ensureSceneEnvironment,
+  setSceneEnvironmentEnabled,
+} from "./graphics";
 
 export type PerformanceTuning = {
   shadowFrameInterval: number;
@@ -13,19 +17,26 @@ export type PerformanceTuning = {
 export type RenderQuality = {
   tuning: PerformanceTuning;
   shadowsEnabled: boolean;
+  environmentEnabled: boolean;
   pixelRatioCap: number;
 };
 
-export function getRenderQuality(smoothedFps: number): RenderQuality {
-  if (smoothedFps < 56) {
+/** Use the higher of smoothed + instant so quality can recover when FPS improves. */
+export function getEffectiveFps(smoothedFps: number, instantFps: number): number {
+  return Math.max(smoothedFps, instantFps * 0.65);
+}
+
+export function getRenderQuality(effectiveFps: number): RenderQuality {
+  if (effectiveFps < 48) {
     return {
       shadowsEnabled: false,
-      pixelRatioCap: 0.72,
+      environmentEnabled: false,
+      pixelRatioCap: 0.62,
       tuning: {
         shadowFrameInterval: 8,
-        minimapFrameInterval: 14,
-        pickupFrameInterval: 7,
-        hudFrameInterval: 7,
+        minimapFrameInterval: 16,
+        pickupFrameInterval: 8,
+        hudFrameInterval: 8,
         enemyFarSkipInterval: 5,
         enemyAnimInterval: 4,
         cameraIdleInterval: 4,
@@ -33,13 +44,14 @@ export function getRenderQuality(smoothedFps: number): RenderQuality {
     };
   }
 
-  if (smoothedFps < 68) {
+  if (effectiveFps < 62) {
     return {
-      shadowsEnabled: true,
-      pixelRatioCap: 0.8,
+      shadowsEnabled: false,
+      environmentEnabled: false,
+      pixelRatioCap: 0.72,
       tuning: {
-        shadowFrameInterval: 6,
-        minimapFrameInterval: 10,
+        shadowFrameInterval: 8,
+        minimapFrameInterval: 12,
         pickupFrameInterval: 6,
         hudFrameInterval: 6,
         enemyFarSkipInterval: 4,
@@ -49,12 +61,13 @@ export function getRenderQuality(smoothedFps: number): RenderQuality {
     };
   }
 
-  if (smoothedFps < 82) {
+  if (effectiveFps < 78) {
     return {
       shadowsEnabled: true,
-      pixelRatioCap: 0.88,
+      environmentEnabled: true,
+      pixelRatioCap: 0.82,
       tuning: {
-        shadowFrameInterval: 4,
+        shadowFrameInterval: 5,
         minimapFrameInterval: 8,
         pickupFrameInterval: 5,
         hudFrameInterval: 5,
@@ -67,6 +80,7 @@ export function getRenderQuality(smoothedFps: number): RenderQuality {
 
   return {
     shadowsEnabled: true,
+    environmentEnabled: true,
     pixelRatioCap: Math.min(window.devicePixelRatio || 1, 1),
     tuning: {
       shadowFrameInterval: 3,
@@ -93,6 +107,7 @@ export function applyAdaptivePixelRatio(
 }
 
 let shadowsSynced: boolean | null = null;
+let environmentSynced: boolean | null = null;
 
 export function syncShadowRendering(
   renderer: THREE.WebGLRenderer,
@@ -107,4 +122,21 @@ export function syncShadowRendering(
   renderer.shadowMap.enabled = enabled;
   sun.castShadow = enabled;
   terrainMesh.receiveShadow = enabled;
+}
+
+export function syncEnvironmentRendering(
+  scene: THREE.Scene,
+  enabled: boolean,
+  renderer: THREE.WebGLRenderer,
+): void {
+  if (environmentSynced === enabled) {
+    return;
+  }
+  environmentSynced = enabled;
+  if (enabled) {
+    ensureSceneEnvironment(scene, renderer);
+    setSceneEnvironmentEnabled(scene, true);
+    return;
+  }
+  setSceneEnvironmentEnabled(scene, false);
 }

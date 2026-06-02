@@ -3,7 +3,7 @@ import { createGroundColorTexture, createGroundNormalTexture } from "./graphics"
 
 export const ARENA_RADIUS = 90;
 const TERRAIN_SIZE = 184;
-const TERRAIN_SEGMENTS = 12;
+const TERRAIN_SEGMENTS = 8;
 const HEIGHT_CACHE_STEP = 2;
 const heightCache = new Map<number, number>();
 

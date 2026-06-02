@@ -9,7 +9,7 @@ export function configureRenderer(renderer: THREE.WebGLRenderer): void {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.12;
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = false;
   renderer.shadowMap.type = THREE.BasicShadowMap;
   renderer.shadowMap.autoUpdate = false;
 }
@@ -31,6 +31,19 @@ export function applySceneEnvironment(
     scene.environment = environmentTexture;
   } catch (error) {
     console.warn("Failed to build scene environment map:", error);
+  }
+}
+
+export function setSceneEnvironmentEnabled(scene: THREE.Scene, enabled: boolean): void {
+  scene.environment = enabled && environmentTexture ? environmentTexture : null;
+}
+
+export function ensureSceneEnvironment(
+  scene: THREE.Scene,
+  renderer: THREE.WebGLRenderer,
+): void {
+  if (!environmentTexture) {
+    applySceneEnvironment(scene, renderer);
   }
 }
 

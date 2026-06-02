@@ -1,9 +1,11 @@
-/** Smoothed FPS sampling + optional on-screen readout. */
+/** Smoothed FPS sampling + optional on-screen readout (uncapped frame times). */
 export class FpsMeter {
   visible = false;
   smoothedFps = 60;
+  instantFps = 60;
   private readonly updateDom: (fps: number) => void;
   private domFrame = 0;
+  private lastSampleTime = performance.now();
 
   constructor(updateDom: (fps: number) => void) {
     this.updateDom = updateDom;
@@ -18,17 +20,16 @@ export class FpsMeter {
     return this.visible;
   }
 
-  setVisible(visible: boolean): void {
-    this.visible = visible;
-    if (visible) {
-      this.updateDom(Math.round(this.smoothedFps));
-    }
-  }
+  /** Call once per rendered frame (uses real wall-clock time, not physics delta). */
+  beginFrame(): void {
+    const now = performance.now();
+    const frameSeconds = (now - this.lastSampleTime) / 1000;
+    this.lastSampleTime = now;
 
-  sample(delta: number): void {
-    if (delta > 0.0001) {
-      const instant = 1 / delta;
-      this.smoothedFps = this.smoothedFps * 0.9 + instant * 0.1;
+    if (frameSeconds > 0.0001 && frameSeconds < 1) {
+      const instant = 1 / frameSeconds;
+      this.instantFps = instant;
+      this.smoothedFps = this.smoothedFps * 0.88 + instant * 0.12;
     }
 
     if (!this.visible) {
@@ -36,7 +37,7 @@ export class FpsMeter {
     }
 
     this.domFrame += 1;
-    if (this.domFrame % 6 === 0) {
+    if (this.domFrame % 4 === 0) {
       this.updateDom(Math.round(this.smoothedFps));
     }
   }

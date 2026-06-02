@@ -8,7 +8,6 @@ import {
 } from "./humanoid";
 import {
   addSkyDome,
-  applySceneEnvironment,
   configureRenderer,
   createBlobShadowTexture,
   setupLighting,
@@ -18,7 +17,9 @@ import { FpsMeter } from "./fpsMeter";
 import { ArenaMinimap } from "./minimap";
 import {
   applyAdaptivePixelRatio,
+  getEffectiveFps,
   getRenderQuality,
+  syncEnvironmentRendering,
   syncShadowRendering,
   type PerformanceTuning,
 } from "./performance";
@@ -221,7 +222,7 @@ try {
 }
 
 renderer.setSize(initialViewport.width, initialViewport.height);
-let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 0.85);
+let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 0.65);
 renderer.setPixelRatio(renderPixelRatio);
 configureRenderer(renderer);
 renderer.domElement.classList.add("game-canvas");
@@ -1328,10 +1329,11 @@ function updateHud(): void {
 }
 
 function tick(): void {
-  const delta = Math.min(clock.getDelta(), 0.033);
+  fpsMeter.beginFrame();
+  const delta = Math.min(clock.getDelta(), 0.05);
   tickFrame += 1;
-  fpsMeter.sample(delta);
-  const quality = getRenderQuality(fpsMeter.smoothedFps);
+  const effectiveFps = getEffectiveFps(fpsMeter.smoothedFps, fpsMeter.instantFps);
+  const quality = getRenderQuality(effectiveFps);
   const { tuning } = quality;
   renderPixelRatio = applyAdaptivePixelRatio(
     renderer,
@@ -1339,6 +1341,7 @@ function tick(): void {
     renderPixelRatio,
   );
   const playing = state === "playing";
+  syncEnvironmentRendering(scene, playing && quality.environmentEnabled, renderer);
   syncShadowRendering(
     renderer,
     sunLight,
@@ -1592,21 +1595,14 @@ function bootGame(): void {
   setState("start");
 }
 
-function initGraphicsEnvironment(): void {
-  try {
-    applySceneEnvironment(scene, renderer);
-  } catch (error) {
-    console.warn("Environment lighting unavailable:", error);
-  }
-}
-
 try {
   resize();
   bootGame();
   updateCamera(1);
+  syncShadowRendering(renderer, sunLight, arenaTerrain.mesh, false);
+  syncEnvironmentRendering(scene, false, renderer);
   renderer.render(scene, camera);
   renderer.setAnimationLoop(tick);
-  requestAnimationFrame(initGraphicsEnvironment);
   bootComplete = true;
 } catch (error) {
   console.error(error);
