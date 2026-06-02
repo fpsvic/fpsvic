@@ -10,7 +10,8 @@ export function configureRenderer(renderer: THREE.WebGLRenderer): void {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.12;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.shadowMap.autoUpdate = false;
 }
 
 export function applySceneEnvironment(
@@ -203,7 +204,7 @@ export function setupLighting(scene: THREE.Scene): THREE.DirectionalLight {
   const sun = new THREE.DirectionalLight(0xfff2dc, 1.35);
   sun.position.set(52, 68, 28);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.mapSize.set(512, 512);
   sun.shadow.bias = -0.00015;
   sun.shadow.normalBias = 0.02;
   sun.shadow.camera.near = 4;

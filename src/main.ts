@@ -214,12 +214,17 @@ try {
 }
 
 renderer.setSize(initialViewport.width, initialViewport.height);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1));
 configureRenderer(renderer);
 renderer.domElement.classList.add("game-canvas");
 renderer.domElement.setAttribute("aria-label", "Blade Arena arena view");
 app.querySelector(".boot-loading")?.remove();
 app.appendChild(renderer.domElement);
+
+const gameCursor = document.createElement("div");
+gameCursor.className = "game-cursor hidden";
+gameCursor.setAttribute("aria-hidden", "true");
+app.appendChild(gameCursor);
 
 const horizonColor = addSkyDome(scene);
 scene.background = horizonColor.clone();
@@ -751,7 +756,7 @@ function addProps(): void {
     treeCount,
   );
   trunks.castShadow = true;
-  foliage.castShadow = true;
+  foliage.castShadow = false;
 
   for (let index = 0; index < treeCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
@@ -839,6 +844,9 @@ function setState(nextState: GameState): void {
 
   backdropScenery.visible = inMatch;
   hud.classList.toggle("hud--menu", showStart || showEnd);
+  renderer.domElement.classList.toggle("game-canvas--playing", inMatch);
+  gameCursor.classList.toggle("hidden", !inMatch);
+  releaseGamePointerLock();
 
   startPanel.classList.toggle("hidden", !showStart);
   startPanel.toggleAttribute("inert", !showStart);
@@ -859,12 +867,11 @@ function startMatch(): void {
 
   spawnMatch();
   setState("playing");
-  useDragAim = false;
+  useDragAim = true;
   isCanvasAiming = false;
   updateMinimap();
-  message.textContent = "Right-click to move · Drag to aim · Hold A to charge";
+  message.textContent = "Right-click to move · Drag LMB to aim · Hold A to charge";
   message.classList.remove("hidden");
-  requestGamePointerLock();
 }
 
 function endMatch(won: boolean): void {
@@ -1307,16 +1314,27 @@ function tick(): void {
     updateStorm(delta);
     if (tickFrame % 4 === 0) {
       updatePickups(delta);
+    }
+    if (tickFrame % 6 === 0) {
       updateMinimap();
     }
     if (attackTime > 0) {
       updateSlashEffects(delta);
     }
-    if (isCameraRotating || cameraShakeDecay > 0 || tickFrame % 2 === 0) {
+    const needsSmoothCamera =
+      isCameraRotating ||
+      cameraShakeDecay > 0 ||
+      hasMoveTarget ||
+      attackTime > 0 ||
+      tickFrame % 2 === 0;
+    if (needsSmoothCamera) {
       updateCamera(delta);
     }
-    if (tickFrame % 3 === 0) {
+    if (tickFrame % 4 === 0) {
       updateHud();
+    }
+    if (tickFrame % 2 === 0) {
+      renderer.shadowMap.needsUpdate = true;
     }
     renderer.render(scene, camera);
     return;
@@ -1376,11 +1394,10 @@ renderer.domElement.addEventListener("mousedown", (event) => {
   if (event.button === 0) {
     isCameraRotating = true;
     isCanvasAiming = true;
+    useDragAim = true;
     cameraRotateStartX = event.clientX;
     cameraRotateStartY = event.clientY;
-    if (!isPointerLocked()) {
-      requestGamePointerLock();
-    }
+    renderer.domElement.classList.add("game-canvas--aiming");
     return;
   }
 
@@ -1397,6 +1414,7 @@ renderer.domElement.addEventListener("mouseup", (event) => {
 
   if (event.button === 0) {
     isCameraRotating = false;
+    renderer.domElement.classList.remove("game-canvas--aiming");
     return;
   }
 
@@ -1419,6 +1437,10 @@ renderer.domElement.addEventListener("mouseup", (event) => {
   }
 });
 
+renderer.domElement.addEventListener("mouseleave", () => {
+  gameCursor.classList.add("hidden");
+});
+
 function applyMouseLook(movementX: number, movementY: number): void {
   cameraYaw -= movementX * 0.0022;
   cameraPitch -= movementY * 0.0014;
@@ -1428,15 +1450,42 @@ function isPointerLocked(): boolean {
   return document.pointerLockElement === renderer.domElement;
 }
 
-function requestGamePointerLock(): void {
-  renderer.domElement.requestPointerLock().catch(() => {
-    useDragAim = true;
-    message.textContent = "Drag on the arena to aim";
-    message.classList.remove("hidden");
-  });
+function releaseGamePointerLock(): void {
+  if (document.pointerLockElement === renderer.domElement) {
+    document.exitPointerLock();
+  }
 }
 
+function updateGameCursor(clientX: number, clientY: number): void {
+  gameCursor.style.left = `${clientX}px`;
+  gameCursor.style.top = `${clientY}px`;
+}
+
+function syncGameCursorVisibility(clientX: number, clientY: number): void {
+  if (state !== "playing") {
+    gameCursor.classList.add("hidden");
+    return;
+  }
+  const rect = renderer.domElement.getBoundingClientRect();
+  const inside =
+    clientX >= rect.left &&
+    clientX <= rect.right &&
+    clientY >= rect.top &&
+    clientY <= rect.bottom;
+  gameCursor.classList.toggle("hidden", !inside);
+  if (inside) {
+    updateGameCursor(clientX, clientY);
+  }
+}
+
+document.addEventListener("pointerlockchange", () => {
+  if (state === "playing" && isPointerLocked()) {
+    releaseGamePointerLock();
+  }
+});
+
 window.addEventListener("mousemove", (event) => {
+  syncGameCursorVisibility(event.clientX, event.clientY);
   if (isPointerLocked()) {
     applyMouseLook(event.movementX, event.movementY);
     return;
@@ -1459,6 +1508,7 @@ renderer.domElement.addEventListener("mousemove", (event) => {
 
 window.addEventListener("mouseup", () => {
   isCanvasAiming = false;
+  renderer.domElement.classList.remove("game-canvas--aiming");
 });
 
 function handleStartClick(event: MouseEvent): void {

@@ -116,13 +116,16 @@ export function createBackdropScenery(): THREE.Group {
 
   const mountainCount = 20;
   const mountains = new THREE.InstancedMesh(mountainGeometry, mountainMaterial, mountainCount);
-  mountains.frustumCulled = false;
+  mountains.castShadow = false;
+  mountains.frustumCulled = true;
   placeMountainInstances(mountains, mountainCount);
   scenery.add(mountains);
 
   const forestCount = 46;
   const trunks = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, forestCount);
   const foliage = new THREE.InstancedMesh(foliageGeometry, foliageMaterial, forestCount);
+  trunks.castShadow = false;
+  foliage.castShadow = false;
   placeForestInstances(trunks, foliage, forestCount);
   scenery.add(trunks, foliage);
 

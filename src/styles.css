@@ -85,6 +85,51 @@ body {
   display: block;
 }
 
+.game-canvas.game-canvas--playing {
+  cursor: none;
+}
+
+.game-canvas.game-canvas--playing.game-canvas--aiming {
+  cursor: none;
+}
+
+.game-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 15;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  pointer-events: none;
+  border: 2px solid rgb(136 230 255 / 92%);
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgb(86 214 255 / 45%);
+}
+
+.game-cursor::before,
+.game-cursor::after {
+  content: "";
+  position: absolute;
+  background: rgb(255 255 255 / 88%);
+}
+
+.game-cursor::before {
+  left: 50%;
+  top: 3px;
+  width: 2px;
+  height: 14px;
+  margin-left: -1px;
+}
+
+.game-cursor::after {
+  top: 50%;
+  left: 3px;
+  width: 14px;
+  height: 2px;
+  margin-top: -1px;
+}
+
 .hud {
   position: fixed;
   inset: 0;
