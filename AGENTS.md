@@ -24,6 +24,7 @@ Single browser app: **Blade Drop Arena** (`fpsvic`) — Vite + TypeScript + Thre
 
 1. `npm install` (also runs on VM startup via the update script).
 2. `npm run dev` — open **http://localhost:5173/** in Desktop preview (or port-forwarded URL), click **Start match**, then use WASD / mouse / click.
+3. In-match, press **P** to open the frame profiler (shows which systems use the most ms per frame).
 
 ### Gotchas
 

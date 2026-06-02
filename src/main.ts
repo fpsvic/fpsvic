@@ -1,5 +1,16 @@
 import * as THREE from "three";
+import {
+  FrameProfiler,
+  getRenderQuality,
+  type PerformanceTuning,
+  type RenderQuality,
+} from "./performance";
 import "./styles.css";
+
+const ARENA_RADIUS = 86;
+const ENEMY_NEAR_SQ = 42 * 42;
+const ENEMY_FAR_SQ = 58 * 58;
+const PICKUP_INTERACT_SQ = 2.4 * 2.4;
 
 type GameState = "start" | "playing" | "ended";
 
@@ -110,8 +121,12 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.autoUpdate = false;
 renderer.sortObjects = false;
 app.appendChild(renderer.domElement);
+
+let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 1.25);
+let shadowFrameCounter = 0;
 
 const hud = document.createElement("div");
 hud.className = "hud";
@@ -138,7 +153,13 @@ hud.innerHTML = `
       <div><kbd>Space</kbd> dash</div>
       <div><kbd>E</kbd> pick up</div>
       <div><kbd>R</kbd> restart</div>
+      <div><kbd>P</kbd> profiler</div>
     </div>
+  </div>
+
+  <div class="profiler-panel hidden" data-profiler-panel aria-live="polite">
+    <div class="profiler-panel__title">Frame profiler</div>
+    <pre class="profiler-panel__body" data-profiler-body></pre>
   </div>
 
   <div class="center-message hidden" data-message></div>
@@ -180,6 +201,12 @@ const endTitle = requireHudElement<HTMLElement>("[data-end-title]");
 const endCopy = requireHudElement<HTMLElement>("[data-end-copy]");
 const startButton = requireHudElement<HTMLButtonElement>("[data-start-button]");
 const restartButton = requireHudElement<HTMLButtonElement>("[data-restart-button]");
+const profilerPanel = requireHudElement<HTMLElement>("[data-profiler-panel]");
+const profilerBody = requireHudElement<HTMLElement>("[data-profiler-body]");
+
+const frameProfiler = new FrameProfiler((lines, fps, frameMs) => {
+  profilerBody.textContent = [`FPS ${fps} · frame ${frameMs.toFixed(1)} ms`, "", ...lines].join("\n");
+});
 
 const clock = new THREE.Clock();
 const world = new THREE.Group();
@@ -196,6 +223,7 @@ const sun = new THREE.DirectionalLight(0xffffff, 3.2);
 sun.position.set(30, 42, 18);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.autoUpdate = false;
 sun.shadow.bias = -0.0002;
 sun.shadow.camera.left = -85;
 sun.shadow.camera.right = 85;
@@ -240,7 +268,7 @@ const safeZoneMaterial = new THREE.MeshBasicMaterial({
   depthWrite: false,
 });
 
-const terrain = new THREE.Mesh(new THREE.CircleGeometry(92, 64), groundMaterial);
+const terrain = new THREE.Mesh(new THREE.CircleGeometry(92, 48), groundMaterial);
 terrain.rotation.x = -Math.PI / 2;
 terrain.receiveShadow = true;
 world.add(terrain);
@@ -297,8 +325,11 @@ function createFighterRig(
 
   const head = new THREE.Mesh(fighterHeadGeometry, headMaterial);
   head.position.y = 1.98;
+  head.userData.baseY = head.position.y;
   head.castShadow = true;
   root.add(head);
+
+  body.userData.baseY = body.position.y;
 
   const weaponMount = new THREE.Group();
   weaponMount.position.set(0.58, 1.18, -0.2);
@@ -372,7 +403,12 @@ const sharedGeometries = {
   fighterBody: fighterBodyGeometry,
   fighterHead: fighterHeadGeometry,
   pickupPlatform: new THREE.CylinderGeometry(0.78, 0.92, 0.18, 12),
+  weaponBlades: weapons.map(
+    (weapon) => new THREE.BoxGeometry(weapon.bladeLength, 0.12, 0.18),
+  ),
 };
+
+let slashPoolCursor = 0;
 
 const playerRig = createFighterRig(playerMaterial, playerHeadMaterial, 1);
 player.add(playerRig.root);
@@ -425,22 +461,20 @@ function createWeaponMesh(weapon: Weapon): THREE.Group {
   handle.castShadow = true;
   weaponGroup.add(handle);
 
-  const blade = new THREE.Mesh(
-    new THREE.BoxGeometry(weapon.bladeLength, 0.12, 0.18),
-    bladeMaterial,
-  );
+  const bladeIndex = Math.max(0, weaponIndex);
+  const blade = new THREE.Mesh(sharedGeometries.weaponBlades[bladeIndex], bladeMaterial);
   blade.position.x = weapon.bladeLength / 2 + weapon.handleLength / 2;
   blade.castShadow = true;
   weaponGroup.add(blade);
 
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.32, 4), bladeMaterial);
+  const tip = new THREE.Mesh(sharedGeometries.weaponTip, bladeMaterial);
   tip.position.x = weapon.bladeLength + weapon.handleLength / 2 + 0.16;
   tip.rotation.z = -Math.PI / 2;
   tip.castShadow = true;
   weaponGroup.add(tip);
 
   if (weapon.name.includes("Axe")) {
-    const axeHead = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.7, 0.16), bladeMaterial);
+    const axeHead = new THREE.Mesh(sharedGeometries.weaponAxeHead, bladeMaterial);
     axeHead.position.x = weapon.bladeLength + weapon.handleLength / 2 - 0.05;
     axeHead.position.y = 0.22;
     axeHead.castShadow = true;
@@ -450,10 +484,12 @@ function createWeaponMesh(weapon: Weapon): THREE.Group {
   return weaponGroup;
 }
 
+const weaponDisplayMeshes = weapons.map((weapon) => createWeaponMesh(weapon));
+
 function equipWeapon(weapon: Weapon): void {
   equippedWeapon = weapon;
   playerWeapon.clear();
-  const mesh = createWeaponMesh(weapon);
+  const mesh = weaponDisplayMeshes[getWeaponIndex(weapon)] ?? weaponDisplayMeshes[0];
   mesh.rotation.z = -0.15;
   playerWeapon.add(mesh);
   weaponNameText.textContent = weapon.name;
@@ -472,7 +508,8 @@ function createEnemy(x: number, z: number, scale = 1): Enemy {
   const rig = createFighterRig(bodyMaterial, playerHeadMaterial, scale);
   group.add(rig.root);
 
-  const weaponMesh = createWeaponMesh(weapons[Math.floor(Math.random() * weapons.length)]);
+  const weaponMesh =
+    weaponDisplayMeshes[Math.floor(Math.random() * weaponDisplayMeshes.length)].clone(true);
   weaponMesh.rotation.z = -0.15;
   rig.weaponMount.add(weaponMesh);
 
@@ -502,7 +539,7 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
   platform.castShadow = true;
   group.add(platform);
 
-  const weaponMesh = createWeaponMesh(weapon);
+  const weaponMesh = weaponDisplayMeshes[weaponIndex].clone(true);
   weaponMesh.position.y = 0.42;
   weaponMesh.rotation.z = 0.65;
   weaponMesh.scale.setScalar(0.9);
@@ -566,15 +603,20 @@ function addProps(): void {
   foliage.instanceMatrix.needsUpdate = true;
   props.add(trunks, foliage);
 
-  for (let index = 0; index < 8; index += 1) {
-    const angle = (index / 8) * Math.PI * 2;
-    const wall = new THREE.Mesh(sharedGeometries.wall, stoneMaterial);
-    wall.position.set(Math.cos(angle) * 18, 1.4, Math.sin(angle) * 18);
-    wall.rotation.y = -angle;
-    wall.castShadow = true;
-    wall.receiveShadow = true;
-    props.add(wall);
+  const wallCount = 8;
+  const walls = new THREE.InstancedMesh(sharedGeometries.wall, stoneMaterial, wallCount);
+  walls.castShadow = true;
+  walls.receiveShadow = true;
+  for (let index = 0; index < wallCount; index += 1) {
+    const angle = (index / wallCount) * Math.PI * 2;
+    propDummy.position.set(Math.cos(angle) * 18, 1.4, Math.sin(angle) * 18);
+    propDummy.rotation.set(0, -angle, 0);
+    propDummy.scale.set(1, 1, 1);
+    propDummy.updateMatrix();
+    walls.setMatrixAt(index, propDummy.matrix);
   }
+  walls.instanceMatrix.needsUpdate = true;
+  props.add(walls);
 }
 
 function spawnMatch(): void {
@@ -688,10 +730,8 @@ function removeEnemy(enemy: Enemy): void {
 }
 
 function addSlashEffect(origin: THREE.Vector3, direction: THREE.Vector3, range: number): void {
-  const slash = slashPool.find((candidate) => !candidate.visible);
-  if (!slash) {
-    return;
-  }
+  const slash = slashPool[slashPoolCursor];
+  slashPoolCursor = (slashPoolCursor + 1) % SLASH_POOL_SIZE;
 
   slash.material.color.set(equippedWeapon.color);
   slash.material.opacity = 0.72;
@@ -774,8 +814,8 @@ function updateInput(delta: number): void {
   }
 
   const distanceFromCenter = Math.hypot(player.position.x, player.position.z);
-  if (distanceFromCenter > 86) {
-    player.position.multiplyScalar(86 / distanceFromCenter);
+  if (distanceFromCenter > ARENA_RADIUS) {
+    player.position.multiplyScalar(ARENA_RADIUS / distanceFromCenter);
   }
 
   player.rotation.y = Math.atan2(playerDirection.x, playerDirection.z);
@@ -809,20 +849,44 @@ function updateCamera(delta: number): void {
   camera.lookAt(cameraTarget);
 }
 
-function updateEnemies(delta: number): void {
+function updateEnemies(delta: number, tuning: PerformanceTuning): void {
+  const playerX = player.position.x;
+  const playerZ = player.position.z;
+  const aiFrame = tickFrame % tuning.enemyAiInterval === 0;
+  const animFrame = tickFrame % tuning.enemyAnimInterval === 0;
+  const bobPhase = clock.elapsedTime * 4;
+
   for (const enemy of enemies) {
     enemy.cooldown = Math.max(0, enemy.cooldown - delta);
     enemy.stun = Math.max(0, enemy.stun - delta);
 
-    const toPlayer = tempVector.copy(player.position).sub(enemy.group.position);
-    toPlayer.y = 0;
-    const distance = toPlayer.length();
-    const direction = distance > 0.001 ? toPlayer.normalize() : tempVector.set(0, 0, 1);
+    const offsetX = playerX - enemy.group.position.x;
+    const offsetZ = playerZ - enemy.group.position.z;
+    const distSq = offsetX * offsetX + offsetZ * offsetZ;
+
+    if (distSq > ENEMY_FAR_SQ) {
+      if (aiFrame) {
+        const distFromCenter = Math.hypot(enemy.group.position.x, enemy.group.position.z);
+        if (distFromCenter > stormRadius - 2) {
+          tempVectorTwo.copy(enemy.group.position).multiplyScalar(-1).normalize();
+          enemy.group.position.addScaledVector(tempVectorTwo, enemy.speed * delta * 1.25);
+        }
+      }
+      continue;
+    }
+
+    if (!aiFrame && distSq > ENEMY_NEAR_SQ) {
+      continue;
+    }
+
+    const distance = Math.sqrt(distSq);
+    tempVector.set(offsetX, 0, offsetZ);
+    const direction = distance > 0.001 ? tempVector.multiplyScalar(1 / distance) : tempVector.set(0, 0, 1);
     enemy.group.rotation.y = Math.atan2(direction.x, direction.z);
 
     if (enemy.stun <= 0) {
       if (distance > 1.45) {
-        enemy.group.position.addScaledVector(direction, enemy.speed * delta);
+        enemy.group.position.addScaledVector(direction, enemy.speed * delta * tuning.enemyAiInterval);
       } else if (enemy.cooldown <= 0) {
         applyPlayerDamage(12);
         enemy.cooldown = 0.85 + Math.random() * 0.45;
@@ -835,30 +899,42 @@ function updateEnemies(delta: number): void {
       enemy.group.position.addScaledVector(tempVectorTwo, enemy.speed * delta * 1.25);
     }
 
-    const bob =
-      Math.sin(clock.elapsedTime * 4 + enemy.group.position.x + enemy.group.position.z) * 0.0008;
-    for (const part of [enemy.rig.body, enemy.rig.head]) {
-      const mesh = part as THREE.Mesh & { userData: { baseY?: number } };
-      if (mesh.userData.baseY === undefined) {
-        mesh.userData.baseY = mesh.position.y;
-      }
-      mesh.position.y = mesh.userData.baseY + bob;
+    if (animFrame && distSq < ENEMY_NEAR_SQ) {
+      const bob =
+        Math.sin(bobPhase + enemy.group.position.x + enemy.group.position.z) * 0.0008;
+      const body = enemy.rig.body;
+      const head = enemy.rig.head;
+      body.position.y = (body.userData.baseY as number) + bob;
+      head.position.y = (head.userData.baseY as number) + bob;
     }
   }
 }
 
-function updatePickups(delta: number): void {
-  let nearestDistance = Number.POSITIVE_INFINITY;
+function updatePickups(delta: number, tuning: PerformanceTuning, updateMessage: boolean): void {
+  let nearestDistanceSq = Number.POSITIVE_INFINITY;
   nearestPickup = null;
 
+  const playerX = player.position.x;
+  const playerZ = player.position.z;
+  const bobTime = clock.elapsedTime * 2.4;
+  const animatePickups = tickFrame % tuning.pickupInterval === 0;
+
   for (const pickup of pickups) {
-    pickup.group.rotation.y += delta * 1.6;
-    pickup.group.position.y = 0.72 + Math.sin(clock.elapsedTime * 2.4 + pickup.bobOffset) * 0.18;
-    const distance = pickup.group.position.distanceTo(player.position);
-    if (distance < 2.4 && distance < nearestDistance) {
-      nearestDistance = distance;
+    if (animatePickups) {
+      pickup.group.rotation.y += delta * 1.6 * tuning.pickupInterval;
+      pickup.group.position.y = 0.72 + Math.sin(bobTime + pickup.bobOffset) * 0.18;
+    }
+    const dx = pickup.group.position.x - playerX;
+    const dz = pickup.group.position.z - playerZ;
+    const distSq = dx * dx + dz * dz;
+    if (distSq < PICKUP_INTERACT_SQ && distSq < nearestDistanceSq) {
+      nearestDistanceSq = distSq;
       nearestPickup = pickup;
     }
+  }
+
+  if (!updateMessage) {
+    return;
   }
 
   if (nearestPickup) {
@@ -950,38 +1026,73 @@ function updateHud(): void {
   }
 }
 
+function applyRenderQuality(): RenderQuality {
+  const quality = getRenderQuality(frameProfiler.fps);
+  const nextRatio = Math.min(window.devicePixelRatio || 1, quality.pixelRatioCap);
+  if (Math.abs(nextRatio - renderPixelRatio) > 0.04) {
+    renderPixelRatio = nextRatio;
+    renderer.setPixelRatio(renderPixelRatio);
+  }
+  const shadowSize = quality.shadowMapSize;
+  if (sun.shadow.mapSize.x !== shadowSize) {
+    sun.shadow.mapSize.set(shadowSize, shadowSize);
+  }
+  return quality;
+}
+
 function animate(): void {
   requestAnimationFrame(animate);
   if (!isPageVisible) {
     return;
   }
 
+  frameProfiler.beginFrame();
   const delta = Math.min(clock.getDelta(), 0.033);
   tickFrame += 1;
+  const quality = applyRenderQuality();
+  const tuning = quality.tuning;
 
   if (state === "playing") {
-    updateInput(delta);
-    updateEnemies(delta);
-    if (tickFrame % 2 === 0) {
-      updatePickups(delta);
-    }
-    updateStorm(delta);
-    updateWeapon(delta);
+    frameProfiler.measure("input", () => updateInput(delta));
+    frameProfiler.measure("enemies", () => updateEnemies(delta, tuning));
+    frameProfiler.measure("pickups", () =>
+      updatePickups(
+        delta,
+        tuning,
+        tickFrame % tuning.messageInterval === 0,
+      ),
+    );
+    frameProfiler.measure("storm", () => updateStorm(delta));
+    frameProfiler.measure("weapon", () => updateWeapon(delta));
   }
 
   if (state === "playing" && attackTime > 0) {
-    updateSlashEffects(delta);
+    frameProfiler.measure("slash", () => updateSlashEffects(delta));
   }
-  updateCamera(delta);
-  if (tickFrame % 3 === 0) {
-    updateHud();
+  frameProfiler.measure("camera", () => updateCamera(delta));
+  if (tickFrame % tuning.hudInterval === 0) {
+    frameProfiler.measure("hud", () => updateHud());
   }
-  renderer.render(scene, camera);
+
+  if (state === "playing") {
+    shadowFrameCounter += 1;
+    if (shadowFrameCounter >= tuning.shadowInterval) {
+      shadowFrameCounter = 0;
+      sun.shadow.needsUpdate = true;
+    }
+  }
+
+  frameProfiler.measure("render", () => {
+    renderer.render(scene, camera);
+    sun.shadow.needsUpdate = false;
+  });
+  frameProfiler.endFrame();
 }
 
 function resize(): void {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  renderer.setPixelRatio(renderPixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
@@ -1000,6 +1111,11 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.code === "KeyR" && state !== "playing") {
     startMatch();
+  }
+  if (event.code === "KeyP") {
+    const show = !frameProfiler.visible;
+    frameProfiler.setVisible(show);
+    profilerPanel.classList.toggle("hidden", !show);
   }
 });
 window.addEventListener("keyup", (event) => {
