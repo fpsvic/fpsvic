@@ -23,7 +23,7 @@ body {
   min-height: 100vh;
   height: 100vh;
   overflow: hidden;
-  background: #071321;
+  background: #1a3a5c;
 }
 
 #app > canvas {

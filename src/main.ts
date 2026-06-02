@@ -104,8 +104,8 @@ const weapons: Weapon[] = [
 ];
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x071321);
-scene.fog = new THREE.FogExp2(0x0a1a2e, 0.0085);
+scene.background = new THREE.Color(0x1a3a5c);
+// No fog — heavy fog + dark PBR read as an empty navy void on some GPUs.
 
 const camera = new THREE.PerspectiveCamera(
   60,
@@ -124,11 +124,13 @@ try {
   app.innerHTML = `<div class="boot-error"><h2>WebGL required</h2><p>${String(error)}</p></div>`;
   throw error;
 }
-renderer.setClearColor(0x071321);
+renderer.setClearColor(0x1a3a5c);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
 renderer.domElement.setAttribute("aria-label", "Blade Drop Arena 3D view");
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
-renderer.shadowMap.autoUpdate = false;
 renderer.sortObjects = false;
 app.appendChild(renderer.domElement);
 
@@ -231,25 +233,36 @@ const pickupsGroup = new THREE.Group();
 const slashEffects = new THREE.Group();
 scene.add(world, props, enemiesGroup, pickupsGroup, slashEffects);
 
-const ambientLight = new THREE.HemisphereLight(0xbadfff, 0x24351f, 2.1);
+scene.add(new THREE.AmbientLight(0x9eb8d8, 0.55));
+const ambientLight = new THREE.HemisphereLight(0xc8e8ff, 0x3d6b42, 1.35);
 scene.add(ambientLight);
 
-const sun = new THREE.DirectionalLight(0xffffff, 3.2);
-sun.position.set(30, 42, 18);
+const sun = new THREE.DirectionalLight(0xfff4e6, 2.4);
+sun.position.set(42, 58, 28);
+sun.target.position.set(0, 0, 0);
+scene.add(sun);
+scene.add(sun.target);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
-sun.shadow.autoUpdate = false;
 sun.shadow.bias = -0.0002;
+sun.shadow.normalBias = 0.02;
+sun.shadow.camera.near = 8;
+sun.shadow.camera.far = 160;
 sun.shadow.camera.left = -85;
 sun.shadow.camera.right = 85;
 sun.shadow.camera.top = 85;
 sun.shadow.camera.bottom = -85;
-scene.add(sun);
+
+const fillLight = new THREE.DirectionalLight(0x88b8ff, 0.45);
+fillLight.position.set(-32, 24, -36);
+scene.add(fillLight);
 
 const groundMaterial = new THREE.MeshStandardMaterial({
-  color: 0x1a6442,
-  roughness: 0.9,
-  metalness: 0.05,
+  color: 0x2d8a52,
+  roughness: 0.88,
+  metalness: 0.02,
+  emissive: new THREE.Color(0x143820),
+  emissiveIntensity: 0.35,
 });
 const sandMaterial = new THREE.MeshStandardMaterial({
   color: 0xc7aa68,
@@ -286,12 +299,14 @@ const safeZoneMaterial = new THREE.MeshBasicMaterial({
 const terrain = new THREE.Mesh(new THREE.CircleGeometry(92, 48), groundMaterial);
 terrain.rotation.x = -Math.PI / 2;
 terrain.receiveShadow = true;
+terrain.frustumCulled = false;
 world.add(terrain);
 
 const centerPad = new THREE.Mesh(new THREE.CircleGeometry(22, 40), sandMaterial);
 centerPad.position.y = 0.012;
 centerPad.rotation.x = -Math.PI / 2;
 centerPad.receiveShadow = true;
+centerPad.frustumCulled = false;
 world.add(centerPad);
 
 const stormRing = new THREE.Mesh(new THREE.RingGeometry(1, 1.8, 48), stormMaterial);
@@ -373,7 +388,7 @@ let dashCooldown = 0;
 let invulnerable = 0;
 let stormRadius = 78;
 let stormTimer = 0;
-let cameraYaw = Math.PI;
+let cameraYaw = 0;
 let cameraPitch = 0.52;
 let nearestPickup: Pickup | null = null;
 let isCanvasAiming = false;
@@ -590,6 +605,8 @@ function addProps(): void {
     rocks.setMatrixAt(index, propDummy.matrix);
   }
   rocks.instanceMatrix.needsUpdate = true;
+  rocks.computeBoundingSphere();
+  rocks.frustumCulled = false;
   props.add(rocks);
 
   const treeCount = 42;
@@ -617,6 +634,10 @@ function addProps(): void {
   }
   trunks.instanceMatrix.needsUpdate = true;
   foliage.instanceMatrix.needsUpdate = true;
+  trunks.computeBoundingSphere();
+  foliage.computeBoundingSphere();
+  trunks.frustumCulled = false;
+  foliage.frustumCulled = false;
   props.add(trunks, foliage);
 
   const wallCount = 8;
@@ -632,6 +653,8 @@ function addProps(): void {
     walls.setMatrixAt(index, propDummy.matrix);
   }
   walls.instanceMatrix.needsUpdate = true;
+  walls.computeBoundingSphere();
+  walls.frustumCulled = false;
   props.add(walls);
 }
 
@@ -695,7 +718,10 @@ function setState(nextState: GameState): void {
   if (nextState === "playing") {
     resize();
     snapGameplayCamera();
+    renderer.shadowMap.autoUpdate = true;
     sun.shadow.needsUpdate = true;
+  } else {
+    renderer.shadowMap.autoUpdate = false;
   }
 }
 
@@ -1128,7 +1154,7 @@ function animate(): void {
     frameProfiler.measure("hud", () => updateHud());
   }
 
-  if (state === "playing") {
+  if (state === "playing" && !renderer.shadowMap.autoUpdate) {
     shadowFrameCounter += 1;
     if (shadowFrameCounter >= tuning.shadowInterval) {
       shadowFrameCounter = 0;
@@ -1138,7 +1164,6 @@ function animate(): void {
 
   frameProfiler.measure("render", () => {
     renderer.render(scene, camera);
-    sun.shadow.needsUpdate = false;
   });
   frameProfiler.endFrame();
 }
