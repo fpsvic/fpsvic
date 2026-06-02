@@ -1,0 +1,11 @@
+{
+  "name": "Blade Arena",
+  "install": "npm install",
+  "terminals": [
+    {
+      "name": "Blade Arena dev",
+      "command": "npm run dev",
+      "ports": [5173]
+    }
+  ]
+}
