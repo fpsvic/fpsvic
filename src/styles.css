@@ -25,6 +25,44 @@ body {
   overflow: hidden;
 }
 
+.boot-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: #cfe8ff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: rgb(6 12 22 / 92%);
+}
+
+.boot-error {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: #f4f6f8;
+  background: rgb(6 12 22 / 96%);
+  text-align: center;
+}
+
+.boot-error h2 {
+  margin: 0;
+}
+
+.boot-error p {
+  margin: 0;
+  color: #c5d8ea;
+  line-height: 1.5;
+}
+
 #app canvas {
   position: fixed;
   inset: 0;

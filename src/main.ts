@@ -136,13 +136,13 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
 configureRenderer(renderer);
+app.querySelector(".boot-loading")?.remove();
 app.appendChild(renderer.domElement);
 
 const horizonColor = addSkyDome(scene);
 scene.background = horizonColor.clone();
 scene.fog = new THREE.FogExp2(horizonColor.getHex(), 0.0058);
 setupLighting(scene);
-applySceneEnvironment(scene, renderer);
 
 const hud = document.createElement("div");
 hud.className = "hud";
@@ -429,7 +429,8 @@ const hudCache = {
 const SLASH_POOL_SIZE = 2;
 const ENEMY_UPDATE_NEAR = 42;
 let tickFrame = 0;
-let isPageVisible = true;
+let isCanvasAiming = false;
+let useDragAim = false;
 const slashPool: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[] = [];
 
 for (let index = 0; index < SLASH_POOL_SIZE; index += 1) {
@@ -775,9 +776,12 @@ function startMatch(): void {
 
   spawnMatch();
   setState("playing");
+  useDragAim = false;
+  isCanvasAiming = false;
   updateMinimap();
-  message.textContent = "Right-click to move · Hold A in front of you to charge";
+  message.textContent = "Right-click to move · Drag to aim · Hold A to charge";
   message.classList.remove("hidden");
+  requestGamePointerLock();
 }
 
 function endMatch(won: boolean): void {
@@ -1209,10 +1213,6 @@ function updateHud(): void {
 }
 
 function tick(): void {
-  if (!isPageVisible) {
-    return;
-  }
-
   const delta = Math.min(clock.getDelta(), 0.033);
   tickFrame += 1;
   const playing = state === "playing";
@@ -1250,9 +1250,6 @@ function resize(): void {
 }
 
 window.addEventListener("resize", resize);
-document.addEventListener("visibilitychange", () => {
-  isPageVisible = document.visibilityState === "visible";
-});
 window.addEventListener("keydown", (event) => {
   if (event.repeat) {
     return;
@@ -1290,8 +1287,12 @@ renderer.domElement.addEventListener("mousedown", (event) => {
 
   if (event.button === 0) {
     isCameraRotating = true;
+    isCanvasAiming = true;
     cameraRotateStartX = event.clientX;
     cameraRotateStartY = event.clientY;
+    if (!isPointerLocked()) {
+      requestGamePointerLock();
+    }
     return;
   }
 
@@ -1330,12 +1331,46 @@ renderer.domElement.addEventListener("mouseup", (event) => {
   }
 });
 
+function applyMouseLook(movementX: number, movementY: number): void {
+  cameraYaw -= movementX * 0.0022;
+  cameraPitch -= movementY * 0.0014;
+}
+
+function isPointerLocked(): boolean {
+  return document.pointerLockElement === renderer.domElement;
+}
+
+function requestGamePointerLock(): void {
+  renderer.domElement.requestPointerLock().catch(() => {
+    useDragAim = true;
+    message.textContent = "Drag on the arena to aim";
+    message.classList.remove("hidden");
+  });
+}
+
 window.addEventListener("mousemove", (event) => {
+  if (isPointerLocked()) {
+    applyMouseLook(event.movementX, event.movementY);
+    return;
+  }
   if (!isCameraRotating) {
     return;
   }
-  cameraYaw -= event.movementX * 0.0022;
-  cameraPitch -= event.movementY * 0.0014;
+  applyMouseLook(event.movementX, event.movementY);
+});
+
+renderer.domElement.addEventListener("mousemove", (event) => {
+  if (state !== "playing" || isPointerLocked()) {
+    return;
+  }
+  if (!isCanvasAiming && !useDragAim) {
+    return;
+  }
+  applyMouseLook(event.movementX, event.movementY);
+});
+
+window.addEventListener("mouseup", () => {
+  isCanvasAiming = false;
 });
 
 function handleStartClick(event: MouseEvent): void {
@@ -1360,16 +1395,46 @@ function bootGame(): void {
     return;
   }
 
-  if (session.state === "playing") {
-    if (enemies.length === 0) {
-      spawnMatch();
-    }
-  } else if (session.state !== "ended") {
-    session.state = "start";
+  if (session.state === "playing" && enemies.length > 0) {
+    setState("playing");
+    return;
   }
-  setState(session.state);
+
+  session.state = "start";
+  setState("start");
 }
 
-bootGame();
-updateCamera(1);
-renderer.setAnimationLoop(tick);
+function showBootError(error: unknown): void {
+  if (!app) {
+    return;
+  }
+  const detail = error instanceof Error ? error.message : String(error);
+  const panel = document.createElement("div");
+  panel.className = "boot-error";
+  panel.innerHTML = `
+    <h2>Blade Arena could not start</h2>
+    <p>${detail}</p>
+    <p>Run <code>npm run dev</code> and open <strong>http://localhost:5173/</strong></p>
+  `;
+  app.replaceChildren(panel);
+}
+
+function initGraphicsEnvironment(): void {
+  try {
+    applySceneEnvironment(scene, renderer);
+  } catch (error) {
+    console.warn("Environment lighting unavailable:", error);
+  }
+}
+
+try {
+  resize();
+  bootGame();
+  updateCamera(1);
+  renderer.render(scene, camera);
+  renderer.setAnimationLoop(tick);
+  requestAnimationFrame(initGraphicsEnvironment);
+} catch (error) {
+  console.error(error);
+  showBootError(error);
+}

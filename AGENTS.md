@@ -15,12 +15,13 @@
 
 ### Desktop preview
 
-1. Run `npm run dev` and open **http://localhost:5173/** in the Desktop pane.
-2. You should see the **Blade Arena** title card over the arena (not a empty mountain vista).
-3. Click **Enter the Arena** to start. Mountains/forests only appear during a match.
-4. If pointer lock fails in the iframe, **right-click** to move and **drag LMB** to rotate the camera.
+1. Run `npm run dev` and open **http://localhost:5173/** in the Desktop pane (not an old port).
+2. You should see **Loading…** then the **Blade Arena** title over the arena.
+3. Click **Enter the Arena**. Mountains/forests only show during a match.
+4. If the cursor does not lock, **drag on the canvas** to aim; **right-click** to move.
 
 ### Gotchas
 
-- Distant mountains are hidden on the title screen; if you only see mountains, hard-refresh the preview URL.
-- HMR can restore a `playing` session without enemies — reload the page or press `R` after a match ends.
+- Embedded Desktop iframes used to report `document.hidden` and freeze the game loop — fixed; hard-refresh if the preview looks stuck.
+- Distant mountains are hidden on the title screen; menu camera frames the play area.
+- HMR can restore a bad session — full page reload fixes it.

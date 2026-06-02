@@ -22,11 +22,15 @@ export function applySceneEnvironment(
     return;
   }
 
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  pmrem.compileEquirectangularShader();
-  environmentTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  pmrem.dispose();
-  scene.environment = environmentTexture;
+  try {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    pmrem.compileEquirectangularShader();
+    environmentTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
+    scene.environment = environmentTexture;
+  } catch (error) {
+    console.warn("Failed to build scene environment map:", error);
+  }
 }
 
 export function createGroundColorTexture(): THREE.CanvasTexture {
