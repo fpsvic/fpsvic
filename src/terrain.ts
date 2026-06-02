@@ -1,9 +1,9 @@
 import * as THREE from "three";
-import { createGroundColorTexture } from "./graphics";
+import { createGroundColorTexture, createGroundNormalTexture } from "./graphics";
 
 export const ARENA_RADIUS = 90;
 const TERRAIN_SIZE = 184;
-const TERRAIN_SEGMENTS = 8;
+const TERRAIN_SEGMENTS = 12;
 const HEIGHT_CACHE_STEP = 2;
 const heightCache = new Map<number, number>();
 
@@ -110,13 +110,18 @@ export type ArenaTerrain = {
 };
 
 export function createArenaTerrain(): ArenaTerrain {
-  const material = new THREE.MeshLambertMaterial({
+  const material = new THREE.MeshStandardMaterial({
     map: createGroundColorTexture(),
+    normalMap: createGroundNormalTexture(),
+    normalScale: new THREE.Vector2(0.48, 0.48),
     vertexColors: true,
+    roughness: 0.88,
+    metalness: 0.04,
+    envMapIntensity: 0.62,
   });
 
   const mesh = new THREE.Mesh(buildTerrainGeometry(), material);
-  mesh.receiveShadow = false;
+  mesh.receiveShadow = true;
 
   return {
     mesh,

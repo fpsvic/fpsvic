@@ -7,9 +7,10 @@ let environmentTexture: THREE.Texture | null = null;
 
 export function configureRenderer(renderer: THREE.WebGLRenderer): void {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.NoToneMapping;
-  renderer.shadowMap.enabled = false;
-  renderer.shadowMap.type = THREE.BasicShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.12;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.shadowMap.autoUpdate = false;
 }
 
@@ -148,7 +149,7 @@ export function createBlobShadowTexture(): THREE.CanvasTexture {
 }
 
 export function addSkyDome(scene: THREE.Scene): THREE.Color {
-  const geometry = new THREE.SphereGeometry(240, 8, 4);
+  const geometry = new THREE.SphereGeometry(240, 12, 6);
   const colors = new Float32Array(geometry.attributes.position.count * 3);
   const zenith = new THREE.Color(0x2f5f9e);
   const horizon = new THREE.Color(0x9eb8d8);
@@ -216,7 +217,7 @@ export function setupLighting(scene: THREE.Scene): THREE.DirectionalLight {
   const sun = new THREE.DirectionalLight(0xfff2dc, 1.35);
   sun.position.set(52, 68, 28);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(256, 256);
+  sun.shadow.mapSize.set(512, 512);
   sun.shadow.bias = -0.00015;
   sun.shadow.normalBias = 0.02;
   sun.shadow.camera.near = 4;

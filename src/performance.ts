@@ -26,12 +26,17 @@ export function getEffectiveFps(smoothedFps: number, instantFps: number): number
   return Math.max(smoothedFps, instantFps * 0.65);
 }
 
+export function resetGraphicsSyncState(): void {
+  shadowsSynced = null;
+  environmentSynced = null;
+}
+
 export function getRenderQuality(effectiveFps: number): RenderQuality {
   if (effectiveFps < 48) {
     return {
-      shadowsEnabled: false,
-      environmentEnabled: false,
-      pixelRatioCap: 0.62,
+      shadowsEnabled: true,
+      environmentEnabled: true,
+      pixelRatioCap: 0.58,
       tuning: {
         shadowFrameInterval: 8,
         minimapFrameInterval: 16,
@@ -46,8 +51,8 @@ export function getRenderQuality(effectiveFps: number): RenderQuality {
 
   if (effectiveFps < 62) {
     return {
-      shadowsEnabled: false,
-      environmentEnabled: false,
+      shadowsEnabled: true,
+      environmentEnabled: true,
       pixelRatioCap: 0.72,
       tuning: {
         shadowFrameInterval: 8,

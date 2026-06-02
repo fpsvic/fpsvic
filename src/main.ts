@@ -19,6 +19,7 @@ import {
   applyAdaptivePixelRatio,
   getEffectiveFps,
   getRenderQuality,
+  resetGraphicsSyncState,
   syncEnvironmentRendering,
   syncShadowRendering,
   type PerformanceTuning,
@@ -223,7 +224,7 @@ try {
 }
 
 renderer.setSize(initialViewport.width, initialViewport.height);
-let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 0.45);
+let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 0.85);
 renderer.setPixelRatio(renderPixelRatio);
 configureRenderer(renderer);
 renderer.domElement.classList.add("game-canvas");
@@ -382,30 +383,42 @@ const sharedGeometries = {
   slashRing: new THREE.RingGeometry(0.42, 1, 12, 1, -0.55, 1.1),
 };
 
-function createSurfaceMaterial(color: THREE.ColorRepresentation): THREE.MeshLambertMaterial {
-  return new THREE.MeshLambertMaterial({ color });
+function createSurfaceMaterial(
+  color: THREE.ColorRepresentation,
+  roughness = 0.68,
+  metalness = 0.08,
+): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness,
+    metalness,
+    envMapIntensity: 0.72,
+  });
 }
 
-const stoneMaterial = createSurfaceMaterial(0x7a8088);
-const treeTrunkMaterial = createSurfaceMaterial(0x4a3528);
-const treeFoliageMaterial = new THREE.MeshLambertMaterial({
+const stoneMaterial = createSurfaceMaterial(0x7a8088, 0.82, 0.06);
+const treeTrunkMaterial = createSurfaceMaterial(0x4a3528, 0.88, 0.02);
+const treeFoliageMaterial = new THREE.MeshStandardMaterial({
   color: 0x356840,
+  roughness: 0.78,
+  metalness: 0.02,
   emissive: new THREE.Color(0x142818),
-  emissiveIntensity: 0.08,
+  emissiveIntensity: 0.05,
+  envMapIntensity: 0.5,
 });
 const playerPalette: HumanoidPalette = {
-  skin: createSurfaceMaterial(0xe8b896),
-  shirt: createSurfaceMaterial(0x4a5e6a),
-  pants: createSurfaceMaterial(0x2c343c),
-  boots: createSurfaceMaterial(0x1c1612),
+  skin: createSurfaceMaterial(0xe8b896, 0.58, 0.02),
+  shirt: createSurfaceMaterial(0x4a5e6a, 0.72, 0.18),
+  pants: createSurfaceMaterial(0x2c343c, 0.88, 0.05),
+  boots: createSurfaceMaterial(0x1c1612, 0.9, 0.12),
 };
 const enemyPalette: HumanoidPalette = {
-  skin: createSurfaceMaterial(0xd4a480),
-  shirt: createSurfaceMaterial(0x5c3238),
-  pants: createSurfaceMaterial(0x2a2224),
-  boots: createSurfaceMaterial(0x141010),
+  skin: createSurfaceMaterial(0xd4a480, 0.58, 0.02),
+  shirt: createSurfaceMaterial(0x5c3238, 0.78, 0.12),
+  pants: createSurfaceMaterial(0x2a2224, 0.9, 0.04),
+  boots: createSurfaceMaterial(0x141010, 0.92, 0.1),
 };
-const gripMaterial = createSurfaceMaterial(0x221c18);
+const gripMaterial = createSurfaceMaterial(0x221c18, 0.82, 0.08);
 const stormMaterial = new THREE.MeshBasicMaterial({
   color: 0x7a5ad8,
   transparent: true,
@@ -416,10 +429,13 @@ const stormMaterial = new THREE.MeshBasicMaterial({
 });
 const weaponBladeMaterials = weapons.map(
   (weapon) =>
-    new THREE.MeshLambertMaterial({
+    new THREE.MeshStandardMaterial({
       color: weapon.color,
-      emissive: new THREE.Color(weapon.color as number),
-      emissiveIntensity: 0.12,
+      roughness: 0.18,
+      metalness: 0.88,
+      emissive: weapon.color,
+      emissiveIntensity: 0.08,
+      envMapIntensity: 1.05,
     }),
 );
 
@@ -469,7 +485,7 @@ scene.add(stormRing);
 const player = new THREE.Group();
 scene.add(player);
 
-const playerHumanoid = createHumanoid(playerPalette, 1, false);
+const playerHumanoid = createHumanoid(playerPalette, 1, true);
 player.add(playerHumanoid.root);
 
 const playerWeapon = new THREE.Group();
@@ -713,7 +729,7 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
     sharedGeometries.pickupPlatform,
     weaponBladeMaterials[weaponIndex] ?? weaponBladeMaterials[0],
   );
-  platform.castShadow = false;
+  platform.castShadow = true;
   group.add(platform);
 
   const pickupBlade = new THREE.Mesh(
@@ -738,8 +754,8 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
 function addProps(): void {
   const rockCount = 3;
   const rocks = new THREE.InstancedMesh(sharedGeometries.rock, stoneMaterial, rockCount);
-  rocks.castShadow = false;
-  rocks.receiveShadow = false;
+  rocks.castShadow = true;
+  rocks.receiveShadow = true;
 
   for (let index = 0; index < rockCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
@@ -768,7 +784,7 @@ function addProps(): void {
     treeFoliageMaterial,
     treeCount,
   );
-  trunks.castShadow = false;
+  trunks.castShadow = true;
   foliage.castShadow = false;
 
   for (let index = 0; index < treeCount; index += 1) {
@@ -858,6 +874,9 @@ function setState(nextState: GameState): void {
   backdropScenery.visible = inMatch;
   hud.classList.toggle("hud--menu", showStart || showEnd);
   renderer.domElement.classList.toggle("game-canvas--playing", inMatch);
+  if (inMatch) {
+    resetGraphicsSyncState();
+  }
   gameCursor.classList.toggle("hidden", !inMatch);
   releaseGamePointerLock();
 
@@ -1339,11 +1358,13 @@ function tick(): void {
       quality.pixelRatioCap,
       renderPixelRatio,
     );
-    syncEnvironmentRendering(scene, false, renderer);
-    syncShadowRendering(renderer, sunLight, arenaTerrain.mesh, false);
   }
   const { tuning } = quality;
   const playing = state === "playing";
+  if (tickFrame % 12 === 0) {
+    syncEnvironmentRendering(scene, true, renderer);
+    syncShadowRendering(renderer, sunLight, arenaTerrain.mesh, playing);
+  }
 
   if (playing) {
     updateMovement(delta);
@@ -1595,11 +1616,19 @@ try {
   resize();
   bootGame();
   updateCamera(1);
-  syncShadowRendering(renderer, sunLight, arenaTerrain.mesh, false);
-  syncEnvironmentRendering(scene, false, renderer);
+  function initRealisticGraphics(): void {
+    try {
+      syncEnvironmentRendering(scene, true, renderer);
+      syncShadowRendering(renderer, sunLight, arenaTerrain.mesh, true);
+    } catch (error) {
+      console.warn("Realistic lighting setup deferred:", error);
+    }
+  }
+
   renderer.render(scene, camera);
   fpsMeter.endRenderFrame();
   renderer.setAnimationLoop(tick);
+  requestAnimationFrame(initRealisticGraphics);
   bootComplete = true;
 } catch (error) {
   console.error(error);
