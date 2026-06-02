@@ -14,7 +14,9 @@ import {
   setupLighting,
 } from "./graphics";
 import { animateLightFighter, createLightFighter, type LightFighter } from "./lightFighter";
+import { FpsMeter } from "./fpsMeter";
 import { ArenaMinimap } from "./minimap";
+import { applyAdaptivePixelRatio, getPerformanceTuning } from "./performance";
 import { createBackdropScenery } from "./scenery";
 import { ARENA_RADIUS, createArenaTerrain, sampleTerrainHeight } from "./terrain";
 import "./styles.css";
@@ -214,7 +216,8 @@ try {
 }
 
 renderer.setSize(initialViewport.width, initialViewport.height);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1));
+let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 1);
+renderer.setPixelRatio(renderPixelRatio);
 configureRenderer(renderer);
 renderer.domElement.classList.add("game-canvas");
 renderer.domElement.setAttribute("aria-label", "Blade Arena arena view");
@@ -234,6 +237,10 @@ setupLighting(scene);
 const hud = document.createElement("div");
 hud.className = "hud";
 hud.innerHTML = `
+  <div class="fps-panel hidden" data-fps-panel aria-live="polite">
+    FPS: <strong data-fps-value>60</strong>
+  </div>
+
   <div class="top-bar">
     <div class="stat"><span>Health</span><strong data-health>100</strong></div>
     <div class="stat"><span>Alive</span><strong data-alive>12</strong></div>
@@ -257,6 +264,7 @@ hud.innerHTML = `
       <div><kbd>Space</kbd> jump</div>
       <div><kbd>E</kbd> pick up</div>
       <div><kbd>R</kbd> restart</div>
+      <div><kbd>T</kbd> FPS counter</div>
     </div>
   </div>
 
@@ -331,9 +339,14 @@ const endTitle = requireHudElement<HTMLElement>("[data-end-title]");
 const endCopy = requireHudElement<HTMLElement>("[data-end-copy]");
 const startButton = requireHudElement<HTMLButtonElement>("[data-start-button]");
 const restartButton = requireHudElement<HTMLButtonElement>("[data-restart-button]");
+const fpsPanel = requireHudElement<HTMLElement>("[data-fps-panel]");
+const fpsValueText = requireHudElement<HTMLElement>("[data-fps-value]");
 const minimapPanel = requireHudElement<HTMLElement>("[data-minimap-panel]");
 const minimapCanvas = requireHudElement<HTMLCanvasElement>("[data-minimap]");
 const arenaMinimap = new ArenaMinimap(minimapCanvas, ARENA_RADIUS);
+const fpsMeter = new FpsMeter((fps) => {
+  fpsValueText.textContent = String(fps);
+});
 
 const clock = new THREE.Clock();
 const world = new THREE.Group();
@@ -1119,12 +1132,13 @@ function updateCamera(delta: number): void {
 }
 
 function updateEnemies(delta: number): void {
+  const enemyPerf = getPerformanceTuning(fpsMeter.smoothedFps);
   for (const enemy of enemies) {
     enemy.cooldown = Math.max(0, enemy.cooldown - delta);
     enemy.stun = Math.max(0, enemy.stun - delta);
 
     const distToPlayer = enemy.group.position.distanceTo(player.position);
-    if (distToPlayer > ENEMY_UPDATE_NEAR && tickFrame % 4 !== 0) {
+    if (distToPlayer > ENEMY_UPDATE_NEAR && tickFrame % enemyPerf.enemyFarSkipInterval !== 0) {
       continue;
     }
 
@@ -1305,6 +1319,9 @@ function updateHud(): void {
 function tick(): void {
   const delta = Math.min(clock.getDelta(), 0.033);
   tickFrame += 1;
+  fpsMeter.sample(delta);
+  renderPixelRatio = applyAdaptivePixelRatio(renderer, fpsMeter.smoothedFps, renderPixelRatio);
+  const perf = getPerformanceTuning(fpsMeter.smoothedFps);
   const playing = state === "playing";
 
   if (playing) {
@@ -1312,10 +1329,10 @@ function tick(): void {
     updateWeapon(delta);
     updateEnemies(delta);
     updateStorm(delta);
-    if (tickFrame % 4 === 0) {
+    if (tickFrame % perf.pickupFrameInterval === 0) {
       updatePickups(delta);
     }
-    if (tickFrame % 6 === 0) {
+    if (tickFrame % perf.minimapFrameInterval === 0) {
       updateMinimap();
     }
     if (attackTime > 0) {
@@ -1330,10 +1347,10 @@ function tick(): void {
     if (needsSmoothCamera) {
       updateCamera(delta);
     }
-    if (tickFrame % 4 === 0) {
+    if (tickFrame % perf.hudFrameInterval === 0) {
       updateHud();
     }
-    if (tickFrame % 2 === 0) {
+    if (tickFrame % perf.shadowFrameInterval === 0) {
       renderer.shadowMap.needsUpdate = true;
     }
     renderer.render(scene, camera);
@@ -1341,6 +1358,9 @@ function tick(): void {
   }
 
   updateCamera(delta);
+  if (tickFrame % perf.shadowFrameInterval === 0) {
+    renderer.shadowMap.needsUpdate = true;
+  }
   renderer.render(scene, camera);
 }
 
@@ -1373,6 +1393,10 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.code === "KeyR" && state !== "playing") {
     startMatch();
+  }
+  if (event.code === "KeyT") {
+    const show = fpsMeter.toggleVisible();
+    fpsPanel.classList.toggle("hidden", !show);
   }
 });
 

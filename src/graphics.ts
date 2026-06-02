@@ -10,7 +10,7 @@ export function configureRenderer(renderer: THREE.WebGLRenderer): void {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.12;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.shadowMap.type = THREE.BasicShadowMap;
   renderer.shadowMap.autoUpdate = false;
 }
 
