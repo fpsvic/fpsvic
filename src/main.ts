@@ -15,8 +15,16 @@ type Weapon = {
   handleLength: number;
 };
 
+type FighterRig = {
+  root: THREE.Group;
+  body: THREE.Mesh;
+  head: THREE.Mesh;
+  weaponMount: THREE.Group;
+};
+
 type Enemy = {
   group: THREE.Group;
+  rig: FighterRig;
   health: number;
   maxHealth: number;
   speed: number;
@@ -217,10 +225,6 @@ const playerMaterial = new THREE.MeshStandardMaterial({
   roughness: 0.45,
   metalness: 0.1,
 });
-const enemyMaterial = new THREE.MeshStandardMaterial({
-  color: 0xff5e7d,
-  roughness: 0.62,
-});
 const stormMaterial = new THREE.MeshBasicMaterial({
   color: 0x784cff,
   transparent: true,
@@ -257,27 +261,51 @@ safeRing.rotation.x = -Math.PI / 2;
 safeRing.position.y = 0.12;
 scene.add(safeRing);
 
-const player = new THREE.Group();
-player.position.set(0, 0, 0);
-scene.add(player);
-
-const playerBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.48, 1.25, 6, 10), playerMaterial);
-playerBody.position.y = 1.02;
-playerBody.castShadow = true;
-player.add(playerBody);
-
 const playerHeadMaterial = new THREE.MeshStandardMaterial({
   color: 0xf2c5a0,
   roughness: 0.58,
 });
-const playerHead = new THREE.Mesh(new THREE.SphereGeometry(0.36, 14, 10), playerHeadMaterial);
-playerHead.position.y = 1.98;
-playerHead.castShadow = true;
-player.add(playerHead);
 
-const playerWeapon = new THREE.Group();
-playerWeapon.position.set(0.58, 1.18, -0.2);
-player.add(playerWeapon);
+const enemyBodyMaterials = [
+  new THREE.MeshStandardMaterial({ color: 0xff5e7d, roughness: 0.45, metalness: 0.1 }),
+  new THREE.MeshStandardMaterial({ color: 0xff8f4d, roughness: 0.45, metalness: 0.1 }),
+  new THREE.MeshStandardMaterial({ color: 0xc46cff, roughness: 0.45, metalness: 0.1 }),
+  new THREE.MeshStandardMaterial({ color: 0x5ed6a8, roughness: 0.45, metalness: 0.1 }),
+  new THREE.MeshStandardMaterial({ color: 0xffc45e, roughness: 0.45, metalness: 0.1 }),
+  new THREE.MeshStandardMaterial({ color: 0x6eb8ff, roughness: 0.45, metalness: 0.1 }),
+];
+
+const fighterBodyGeometry = new THREE.CapsuleGeometry(0.48, 1.25, 6, 10);
+const fighterHeadGeometry = new THREE.SphereGeometry(0.36, 14, 10);
+
+const player = new THREE.Group();
+player.position.set(0, 0, 0);
+scene.add(player);
+
+function createFighterRig(
+  bodyMaterial: THREE.Material,
+  headMaterial: THREE.Material,
+  scale = 1,
+): FighterRig {
+  const root = new THREE.Group();
+  root.scale.setScalar(scale);
+
+  const body = new THREE.Mesh(fighterBodyGeometry, bodyMaterial);
+  body.position.y = 1.02;
+  body.castShadow = true;
+  root.add(body);
+
+  const head = new THREE.Mesh(fighterHeadGeometry, headMaterial);
+  head.position.y = 1.98;
+  head.castShadow = true;
+  root.add(head);
+
+  const weaponMount = new THREE.Group();
+  weaponMount.position.set(0.58, 1.18, -0.2);
+  root.add(weaponMount);
+
+  return { root, body, head, weaponMount };
+}
 
 const keys = new Set<string>();
 const pointer = new THREE.Vector2();
@@ -332,11 +360,6 @@ const pickupPlatformMaterials = weapons.map(
       emissiveIntensity: 0.18,
     }),
 );
-const enemyHelmetMaterial = new THREE.MeshStandardMaterial({
-  color: 0x371a2a,
-  roughness: 0.5,
-});
-
 const sharedGeometries = {
   weaponHandle: new THREE.CylinderGeometry(0.055, 0.075, 1, 8),
   weaponTip: new THREE.ConeGeometry(0.16, 0.32, 4),
@@ -346,10 +369,15 @@ const sharedGeometries = {
   leaves: new THREE.ConeGeometry(1.2, 2.3, 6),
   wall: new THREE.BoxGeometry(8, 2.8, 0.7),
   slashRing: new THREE.RingGeometry(0.42, 1, 24, 1, -0.55, 1.1),
-  enemyBody: new THREE.CapsuleGeometry(1, 1, 6, 10),
-  enemyHelmet: new THREE.SphereGeometry(1, 12, 8),
+  fighterBody: fighterBodyGeometry,
+  fighterHead: fighterHeadGeometry,
   pickupPlatform: new THREE.CylinderGeometry(0.78, 0.92, 0.18, 12),
 };
+
+const playerRig = createFighterRig(playerMaterial, playerHeadMaterial, 1);
+player.add(playerRig.root);
+const playerBody = playerRig.body;
+const playerWeapon = playerRig.weaponMount;
 
 const leavesMaterial = new THREE.MeshStandardMaterial({ color: 0x2fa96b, roughness: 0.74 });
 const propDummy = new THREE.Object3D();
@@ -438,28 +466,21 @@ function createEnemy(x: number, z: number, scale = 1): Enemy {
   const group = new THREE.Group();
   group.position.set(x, 0, z);
 
-  const body = new THREE.Mesh(sharedGeometries.enemyBody, enemyMaterial);
-  body.scale.set(0.43 * scale, 1.05 * scale, 0.43 * scale);
-  body.position.y = 0.94 * scale;
-  body.castShadow = true;
-  group.add(body);
+  const bodyMaterial =
+    enemyBodyMaterials[Math.floor(Math.random() * enemyBodyMaterials.length)] ??
+    enemyBodyMaterials[0];
+  const rig = createFighterRig(bodyMaterial, playerHeadMaterial, scale);
+  group.add(rig.root);
 
-  const helmet = new THREE.Mesh(sharedGeometries.enemyHelmet, enemyHelmetMaterial);
-  helmet.scale.setScalar(0.34 * scale);
-  helmet.position.y = 1.75 * scale;
-  helmet.castShadow = true;
-  group.add(helmet);
-
-  const blade = createWeaponMesh(weapons[Math.floor(Math.random() * weapons.length)]);
-  blade.scale.setScalar(0.75 * scale);
-  blade.position.set(0.5 * scale, 1.05 * scale, -0.08);
-  blade.rotation.z = 0.2;
-  group.add(blade);
+  const weaponMesh = createWeaponMesh(weapons[Math.floor(Math.random() * weapons.length)]);
+  weaponMesh.rotation.z = -0.15;
+  rig.weaponMount.add(weaponMesh);
 
   enemiesGroup.add(group);
 
   return {
     group,
+    rig,
     health: 80 + scale * 20,
     maxHealth: 80 + scale * 20,
     speed: 2.5 + Math.random() * 1.05,
@@ -814,13 +835,15 @@ function updateEnemies(delta: number): void {
       enemy.group.position.addScaledVector(tempVectorTwo, enemy.speed * delta * 1.25);
     }
 
-    enemy.group.children.forEach((child, index) => {
-      const mesh = child as THREE.Object3D & { userData: { baseY?: number } };
+    const bob =
+      Math.sin(clock.elapsedTime * 4 + enemy.group.position.x + enemy.group.position.z) * 0.0008;
+    for (const part of [enemy.rig.body, enemy.rig.head]) {
+      const mesh = part as THREE.Mesh & { userData: { baseY?: number } };
       if (mesh.userData.baseY === undefined) {
         mesh.userData.baseY = mesh.position.y;
       }
-      mesh.position.y = mesh.userData.baseY + Math.sin(clock.elapsedTime * 4 + index) * 0.0008;
-    });
+      mesh.position.y = mesh.userData.baseY + bob;
+    }
   }
 }
 
