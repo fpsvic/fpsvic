@@ -388,13 +388,19 @@ hud.innerHTML = `
             <span class="title-screen__cta-shine" aria-hidden="true"></span>
           </button>
         </div>
-        <p class="title-screen__hint">Press <kbd>B</kbd> for shop · <kbd>1-5</kbd> inventory · <kbd>R</kbd> restart</p>
+        <p class="title-screen__hint">Shop on the right · <kbd>B</kbd> in-game · <kbd>1-5</kbd> inventory</p>
       </div>
-      <aside class="title-screen__rail title-screen__rail--right" aria-hidden="true">
-        <span>Storm</span>
-        <span>Closes</span>
-        <span>Fast</span>
-      </aside>
+      <div class="title-screen__side title-screen__side--right">
+        <button type="button" class="title-screen__shop-btn" data-title-shop-button>
+          <span class="title-screen__shop-btn-glow" aria-hidden="true"></span>
+          <span class="title-screen__shop-btn-icon" aria-hidden="true">◆</span>
+          <span class="title-screen__shop-btn-label">Arena Shop</span>
+          <span class="title-screen__shop-btn-sub">Weapons · buffs · heals</span>
+          <span class="title-screen__shop-btn-shards">
+            <span data-title-shop-shards>120</span> shards
+          </span>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -434,6 +440,8 @@ const endTitle = requireHudElement<HTMLElement>("[data-end-title]");
 const endCopy = requireHudElement<HTMLElement>("[data-end-copy]");
 const startButton = requireHudElement<HTMLButtonElement>("[data-start-button]");
 const restartButton = requireHudElement<HTMLButtonElement>("[data-restart-button]");
+const titleShopButton = requireHudElement<HTMLButtonElement>("[data-title-shop-button]");
+const titleShopShardsText = requireHudElement<HTMLElement>("[data-title-shop-shards]");
 const fpsPanel = requireHudElement<HTMLElement>("[data-fps-panel]");
 const fpsValueText = requireHudElement<HTMLElement>("[data-fps-value]");
 const fpsMsText = requireHudElement<HTMLElement>("[data-fps-ms]");
@@ -724,7 +732,7 @@ function buildShopGrid(): void {
         const { result, shards } = purchaseListing(listing, session.shards, session.inventory);
         session.shards = shards;
         shopToast.textContent = result.message;
-        shopShardsText.textContent = String(session.shards);
+        syncShopShardLabels();
         shardsText.textContent = String(session.shards);
         hudCache.shards = -1;
         renderInventoryHud();
@@ -737,12 +745,19 @@ function buildShopGrid(): void {
   );
 }
 
+function syncShopShardLabels(): void {
+  const label = String(session.shards);
+  shopShardsText.textContent = label;
+  titleShopShardsText.textContent = label;
+}
+
 function setShopOpen(open: boolean): void {
   shopOpen = open;
   shopPanel.classList.toggle("hidden", !open);
   hud.classList.toggle("hud--shop-open", open);
+  startPanel.classList.toggle("title-screen--shop-open", open && state === "start");
   if (open) {
-    shopShardsText.textContent = String(session.shards);
+    syncShopShardLabels();
     shopToast.textContent = "Spend shards on gear before you drop in, or mid-match.";
   }
 }
@@ -1612,6 +1627,7 @@ function updateHud(): void {
   const shards = session.shards;
   if (shards !== hudCache.shards) {
     shardsText.textContent = String(shards);
+    titleShopShardsText.textContent = String(shards);
     hudCache.shards = shards;
   }
   if (healthScale !== hudCache.healthScale) {
@@ -1885,6 +1901,14 @@ function handleStartClick(event: MouseEvent): void {
 
 startButton.addEventListener("click", handleStartClick);
 restartButton.addEventListener("click", handleStartClick);
+
+titleShopButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  event.preventDefault();
+  setShopOpen(true);
+});
+
+syncShopShardLabels();
 
 function bootGame(): void {
   const session = getSession();
