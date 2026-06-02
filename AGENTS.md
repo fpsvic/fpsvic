@@ -24,4 +24,6 @@
 
 - Embedded Desktop iframes used to report `document.hidden` and freeze the game loop — fixed; hard-refresh if the preview looks stuck.
 - Distant mountains are hidden on the title screen; menu camera frames the play area.
-- HMR can restore a bad session — full page reload fixes it.
+- HMR can restore a bad session — full page reload fixes it; embedded preview always resets to the title screen.
+- If the preview iframe has not laid out yet, `ResizeObserver` on `#app` resizes the canvas once dimensions are known.
+- Uncaught startup errors show a **Blade Arena could not start** panel instead of a blank view.

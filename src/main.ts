@@ -68,11 +68,81 @@ type Pickup = {
   bobOffset: number;
 };
 
-const app = document.querySelector<HTMLDivElement>("#app");
+const appRoot = document.querySelector<HTMLDivElement>("#app");
 
-if (!app) {
+if (!appRoot) {
   throw new Error("Unable to find app container.");
 }
+
+const app = appRoot;
+
+function isEmbeddedPreview(): boolean {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
+function resetPreviewSession(): void {
+  if (!isEmbeddedPreview()) {
+    return;
+  }
+  const root = window as Window & { __bladeArenaSession?: GameSession };
+  delete root.__bladeArenaSession;
+}
+
+function getViewportSize(): { width: number; height: number } {
+  const rect = app.getBoundingClientRect();
+  const width = Math.max(
+    Math.floor(rect.width) || 0,
+    document.documentElement.clientWidth || 0,
+    window.innerWidth || 0,
+    320,
+  );
+  const height = Math.max(
+    Math.floor(rect.height) || 0,
+    document.documentElement.clientHeight || 0,
+    window.innerHeight || 0,
+    240,
+  );
+  return { width, height };
+}
+
+function showBootError(error: unknown): void {
+  const detail = error instanceof Error ? error.message : String(error);
+  const panel = document.createElement("div");
+  panel.className = "boot-error";
+  panel.innerHTML = `
+    <h2>Blade Arena could not start</h2>
+    <p>${detail.replace(/</g, "&lt;")}</p>
+    <p>Run <code>npm run dev</code> and open <strong>http://localhost:5173/</strong></p>
+    <p>If the Desktop pane looks stuck, hard-refresh the preview.</p>
+  `;
+  app.replaceChildren(panel);
+}
+
+let bootComplete = false;
+
+function installBootErrorHandlers(): void {
+  window.addEventListener("error", (event) => {
+    if (bootComplete || event.defaultPrevented) {
+      return;
+    }
+    console.error(event.error ?? event.message);
+    showBootError(event.error ?? event.message);
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    if (bootComplete) {
+      return;
+    }
+    console.error(event.reason);
+    showBootError(event.reason);
+  });
+}
+
+resetPreviewSession();
+installBootErrorHandlers();
 
 const weapons: Weapon[] = [
   {
@@ -123,19 +193,30 @@ const weapons: Weapon[] = [
 
 const scene = new THREE.Scene();
 
+const initialViewport = getViewportSize();
 const camera = new THREE.PerspectiveCamera(
   58,
-  window.innerWidth / window.innerHeight,
+  initialViewport.width / initialViewport.height,
   0.1,
   260,
 );
-const renderer = new THREE.WebGLRenderer({
-  antialias: false,
-  powerPreference: "high-performance",
-});
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
+
+let renderer: THREE.WebGLRenderer;
+try {
+  renderer = new THREE.WebGLRenderer({
+    antialias: false,
+    powerPreference: "high-performance",
+    failIfMajorPerformanceCaveat: false,
+  });
+} catch (error) {
+  showBootError(error);
+  throw error;
+}
+
+renderer.setSize(initialViewport.width, initialViewport.height);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
 configureRenderer(renderer);
+renderer.domElement.setAttribute("aria-label", "Blade Arena arena view");
 app.querySelector(".boot-loading")?.remove();
 app.appendChild(renderer.domElement);
 
@@ -332,6 +413,7 @@ const enemyFighterMaterials = {
 const arenaTerrain = createArenaTerrain();
 world.add(arenaTerrain.mesh);
 const backdropScenery = createBackdropScenery();
+backdropScenery.visible = false;
 scene.add(backdropScenery);
 
 const playerBlobShadow = new THREE.Mesh(
@@ -1244,12 +1326,17 @@ function tick(): void {
 }
 
 function resize(): void {
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const { width, height } = getViewportSize();
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(width, height, false);
 }
 
 window.addEventListener("resize", resize);
+if (typeof ResizeObserver !== "undefined") {
+  const viewportObserver = new ResizeObserver(() => resize());
+  viewportObserver.observe(app);
+}
 window.addEventListener("keydown", (event) => {
   if (event.repeat) {
     return;
@@ -1385,6 +1472,10 @@ restartButton.addEventListener("click", handleStartClick);
 function bootGame(): void {
   const session = getSession();
 
+  if (import.meta.hot || isEmbeddedPreview()) {
+    session.state = "start";
+  }
+
   if (!session.initialized) {
     session.initialized = true;
     session.state = "start";
@@ -1395,28 +1486,13 @@ function bootGame(): void {
     return;
   }
 
-  if (session.state === "playing" && enemies.length > 0) {
+  if (!isEmbeddedPreview() && session.state === "playing" && enemies.length > 0) {
     setState("playing");
     return;
   }
 
   session.state = "start";
   setState("start");
-}
-
-function showBootError(error: unknown): void {
-  if (!app) {
-    return;
-  }
-  const detail = error instanceof Error ? error.message : String(error);
-  const panel = document.createElement("div");
-  panel.className = "boot-error";
-  panel.innerHTML = `
-    <h2>Blade Arena could not start</h2>
-    <p>${detail}</p>
-    <p>Run <code>npm run dev</code> and open <strong>http://localhost:5173/</strong></p>
-  `;
-  app.replaceChildren(panel);
 }
 
 function initGraphicsEnvironment(): void {
@@ -1434,6 +1510,7 @@ try {
   renderer.render(scene, camera);
   renderer.setAnimationLoop(tick);
   requestAnimationFrame(initGraphicsEnvironment);
+  bootComplete = true;
 } catch (error) {
   console.error(error);
   showBootError(error);
