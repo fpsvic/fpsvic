@@ -6,7 +6,13 @@ import {
   setHumanoidFlash,
   type HumanoidPalette,
 } from "./humanoid";
-import { addSkyDome, configureRenderer, setupLighting } from "./graphics";
+import {
+  addSkyDome,
+  applySceneEnvironment,
+  configureRenderer,
+  createBlobShadowTexture,
+  setupLighting,
+} from "./graphics";
 import { animateLightFighter, createLightFighter, type LightFighter } from "./lightFighter";
 import { ArenaMinimap } from "./minimap";
 import { createBackdropScenery } from "./scenery";
@@ -134,8 +140,9 @@ app.appendChild(renderer.domElement);
 
 const horizonColor = addSkyDome(scene);
 scene.background = horizonColor.clone();
-scene.fog = new THREE.Fog(horizonColor.getHex(), 48, 215);
+scene.fog = new THREE.FogExp2(horizonColor.getHex(), 0.0058);
 setupLighting(scene);
+applySceneEnvironment(scene, renderer);
 
 const hud = document.createElement("div");
 hud.className = "hud";
@@ -261,26 +268,42 @@ const sharedGeometries = {
   slashRing: new THREE.RingGeometry(0.42, 1, 12, 1, -0.55, 1.1),
 };
 
-const stoneMaterial = new THREE.MeshLambertMaterial({ color: 0x7a8088 });
-const treeTrunkMaterial = new THREE.MeshLambertMaterial({ color: 0x4a3528 });
-const treeFoliageMaterial = new THREE.MeshLambertMaterial({
+function createSurfaceMaterial(
+  color: THREE.ColorRepresentation,
+  roughness = 0.65,
+  metalness = 0.08,
+): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness,
+    metalness,
+    envMapIntensity: 0.72,
+  });
+}
+
+const stoneMaterial = createSurfaceMaterial(0x7a8088, 0.82, 0.06);
+const treeTrunkMaterial = createSurfaceMaterial(0x4a3528, 0.88, 0.02);
+const treeFoliageMaterial = new THREE.MeshStandardMaterial({
   color: 0x356840,
+  roughness: 0.78,
+  metalness: 0.02,
   emissive: new THREE.Color(0x142818),
-  emissiveIntensity: 0.06,
+  emissiveIntensity: 0.05,
+  envMapIntensity: 0.5,
 });
 const playerPalette: HumanoidPalette = {
-  skin: new THREE.MeshLambertMaterial({ color: 0xe8b896 }),
-  shirt: new THREE.MeshLambertMaterial({ color: 0x4a5e6a }),
-  pants: new THREE.MeshLambertMaterial({ color: 0x2c343c }),
-  boots: new THREE.MeshLambertMaterial({ color: 0x1c1612 }),
+  skin: createSurfaceMaterial(0xe8b896, 0.58, 0.02),
+  shirt: createSurfaceMaterial(0x4a5e6a, 0.72, 0.18),
+  pants: createSurfaceMaterial(0x2c343c, 0.88, 0.05),
+  boots: createSurfaceMaterial(0x1c1612, 0.9, 0.12),
 };
 const enemyPalette: HumanoidPalette = {
-  skin: new THREE.MeshLambertMaterial({ color: 0xd4a480 }),
-  shirt: new THREE.MeshLambertMaterial({ color: 0x5c3238 }),
-  pants: new THREE.MeshLambertMaterial({ color: 0x2a2224 }),
-  boots: new THREE.MeshLambertMaterial({ color: 0x141010 }),
+  skin: createSurfaceMaterial(0xd4a480, 0.58, 0.02),
+  shirt: createSurfaceMaterial(0x5c3238, 0.78, 0.12),
+  pants: createSurfaceMaterial(0x2a2224, 0.9, 0.04),
+  boots: createSurfaceMaterial(0x141010, 0.92, 0.1),
 };
-const gripMaterial = new THREE.MeshLambertMaterial({ color: 0x221c18 });
+const gripMaterial = createSurfaceMaterial(0x221c18, 0.82, 0.08);
 const stormMaterial = new THREE.MeshBasicMaterial({
   color: 0x7a5ad8,
   transparent: true,
@@ -290,7 +313,15 @@ const stormMaterial = new THREE.MeshBasicMaterial({
   blending: THREE.AdditiveBlending,
 });
 const weaponBladeMaterials = weapons.map(
-  (weapon) => new THREE.MeshLambertMaterial({ color: weapon.color }),
+  (weapon) =>
+    new THREE.MeshStandardMaterial({
+      color: weapon.color,
+      roughness: 0.18,
+      metalness: 0.88,
+      emissive: weapon.color,
+      emissiveIntensity: 0.08,
+      envMapIntensity: 1.05,
+    }),
 );
 
 const enemyFighterMaterials = {
@@ -302,6 +333,19 @@ const arenaTerrain = createArenaTerrain();
 world.add(arenaTerrain.mesh);
 const backdropScenery = createBackdropScenery();
 scene.add(backdropScenery);
+
+const playerBlobShadow = new THREE.Mesh(
+  new THREE.CircleGeometry(1, 16),
+  new THREE.MeshBasicMaterial({
+    map: createBlobShadowTexture(),
+    transparent: true,
+    opacity: 0.48,
+    depthWrite: false,
+  }),
+);
+playerBlobShadow.rotation.x = -Math.PI / 2;
+playerBlobShadow.renderOrder = -1;
+scene.add(playerBlobShadow);
 
 const moveMarker = new THREE.Mesh(
   new THREE.RingGeometry(0.32, 0.52, 16),
@@ -325,7 +369,7 @@ scene.add(stormRing);
 const player = new THREE.Group();
 scene.add(player);
 
-const playerHumanoid = createHumanoid(playerPalette, 1, false);
+const playerHumanoid = createHumanoid(playerPalette, 1, true);
 player.add(playerHumanoid.root);
 
 const playerWeapon = new THREE.Group();
@@ -567,7 +611,7 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
     sharedGeometries.pickupPlatform,
     weaponBladeMaterials[weaponIndex] ?? weaponBladeMaterials[0],
   );
-  platform.castShadow = false;
+  platform.castShadow = true;
   group.add(platform);
 
   const pickupBlade = new THREE.Mesh(
@@ -592,6 +636,8 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
 function addProps(): void {
   const rockCount = 3;
   const rocks = new THREE.InstancedMesh(sharedGeometries.rock, stoneMaterial, rockCount);
+  rocks.castShadow = true;
+  rocks.receiveShadow = true;
 
   for (let index = 0; index < rockCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
@@ -620,6 +666,8 @@ function addProps(): void {
     treeFoliageMaterial,
     treeCount,
   );
+  trunks.castShadow = true;
+  foliage.castShadow = true;
 
   for (let index = 0; index < treeCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
@@ -900,6 +948,13 @@ function updateMovement(delta: number): void {
 
   player.rotation.y = Math.atan2(playerDirection.x, playerDirection.z);
   applyPlayerJumpPhysics(delta);
+  playerBlobShadow.position.set(
+    player.position.x,
+    sampleTerrainHeight(player.position.x, player.position.z) + 0.04,
+    player.position.z,
+  );
+  const shadowScale = 1 + playerVelocity.length() * 0.035;
+  playerBlobShadow.scale.set(shadowScale, shadowScale, 1);
   const swingPhase =
     attackTime > 0 ? 1 - attackTime / Math.max(attackAnimDuration, 0.001) : 0;
   const chargeRatio = THREE.MathUtils.clamp(attackChargeTime / ATTACK_CHARGE_TIME, 0, 1);

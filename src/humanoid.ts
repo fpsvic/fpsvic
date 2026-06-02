@@ -236,7 +236,7 @@ export function setHumanoidFlash(
   palette: HumanoidPalette,
   flashing: boolean,
 ): void {
-  const shirt = palette.shirt as THREE.MeshLambertMaterial;
+  const shirt = palette.shirt as THREE.MeshStandardMaterial;
   shirt.transparent = flashing;
   shirt.opacity = flashing ? 0.55 : 1;
   if (!flashing) {
