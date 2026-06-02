@@ -85,8 +85,8 @@ const weapons: Weapon[] = [
 ];
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x071321);
-scene.fog = new THREE.FogExp2(0x071321, 0.021);
+// v1 used the same navy for background + heavy fog, so the arena read as an empty void.
+scene.background = new THREE.Color(0x1a3a5c);
 
 const camera = new THREE.PerspectiveCamera(
   60,
@@ -94,11 +94,12 @@ const camera = new THREE.PerspectiveCamera(
   0.1,
   500,
 );
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setClearColor(0x1a3a5c);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.domElement.setAttribute("aria-label", "Blade Drop Arena 3D view");
 app.appendChild(renderer.domElement);
 
 const hud = document.createElement("div");
@@ -177,23 +178,28 @@ const pickupsGroup = new THREE.Group();
 const slashEffects = new THREE.Group();
 scene.add(world, props, enemiesGroup, pickupsGroup, slashEffects);
 
-const ambientLight = new THREE.HemisphereLight(0xbadfff, 0x24351f, 2.1);
+scene.add(new THREE.AmbientLight(0x9eb8d8, 0.45));
+const ambientLight = new THREE.HemisphereLight(0xc8e8ff, 0x3d6b42, 1.6);
 scene.add(ambientLight);
 
-const sun = new THREE.DirectionalLight(0xffffff, 3.2);
+const sun = new THREE.DirectionalLight(0xfff4e6, 2.8);
 sun.position.set(30, 42, 18);
+sun.target.position.set(0, 0, 0);
+scene.add(sun);
+scene.add(sun.target);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.left = -85;
 sun.shadow.camera.right = 85;
 sun.shadow.camera.top = 85;
 sun.shadow.camera.bottom = -85;
-scene.add(sun);
 
 const groundMaterial = new THREE.MeshStandardMaterial({
-  color: 0x1a6442,
+  color: 0x2d8a52,
   roughness: 0.9,
   metalness: 0.05,
+  emissive: new THREE.Color(0x143820),
+  emissiveIntensity: 0.28,
 });
 const sandMaterial = new THREE.MeshStandardMaterial({
   color: 0xc7aa68,
@@ -234,6 +240,7 @@ const safeZoneMaterial = new THREE.MeshBasicMaterial({
 const terrain = new THREE.Mesh(new THREE.CircleGeometry(92, 96), groundMaterial);
 terrain.rotation.x = -Math.PI / 2;
 terrain.receiveShadow = true;
+terrain.frustumCulled = false;
 world.add(terrain);
 
 const centerPad = new THREE.Mesh(new THREE.CircleGeometry(22, 64), sandMaterial);
@@ -509,18 +516,52 @@ function spawnMatch(): void {
   }
 }
 
+function getViewportSize(): { width: number; height: number } {
+  const rect = app!.getBoundingClientRect();
+  return {
+    width: Math.max(1, Math.floor(rect.width) || window.innerWidth || 320),
+    height: Math.max(1, Math.floor(rect.height) || window.innerHeight || 240),
+  };
+}
+
+function setMenuCamera(): void {
+  camera.position.set(52, 38, 52);
+  camera.lookAt(0, 1.2, 0);
+}
+
+function snapGameplayCamera(): void {
+  cameraPitch = THREE.MathUtils.clamp(cameraPitch, 0.35, 0.72);
+  const radius = 8.4;
+  const height = 3.2 + cameraPitch * 4.5;
+  cameraTarget.copy(player.position).add(new THREE.Vector3(0, 1.45, 0));
+  camera.position.set(
+    player.position.x - Math.sin(cameraYaw) * radius,
+    player.position.y + height,
+    player.position.z - Math.cos(cameraYaw) * radius,
+  );
+  camera.lookAt(cameraTarget);
+}
+
 function setState(nextState: GameState): void {
   state = nextState;
   startPanel.classList.toggle("hidden", nextState !== "start");
   endPanel.classList.toggle("hidden", nextState !== "ended");
   message.classList.toggle("hidden", nextState !== "playing");
+  hud.classList.toggle("hud--playing", nextState === "playing");
+  if (nextState === "playing") {
+    resize();
+    snapGameplayCamera();
+  }
 }
 
 function startMatch(): void {
   spawnMatch();
+  snapGameplayCamera();
   setState("playing");
+  message.textContent = "Click or drag the arena to aim · WASD to move";
+  message.classList.remove("hidden");
   renderer.domElement.requestPointerLock().catch(() => {
-    message.textContent = "Click the arena to lock aim";
+    message.textContent = "Drag on the arena to aim";
   });
 }
 
@@ -672,6 +713,11 @@ function dash(): void {
 }
 
 function updateCamera(delta: number): void {
+  if (state !== "playing") {
+    setMenuCamera();
+    return;
+  }
+
   cameraPitch = THREE.MathUtils.clamp(cameraPitch, 0.22, 0.95);
   const radius = 8.4;
   const height = 3.2 + cameraPitch * 4.5;
@@ -807,12 +853,22 @@ function animate(): void {
 }
 
 function resize(): void {
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const { width, height } = getViewportSize();
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(width, height, false);
 }
 
 window.addEventListener("resize", resize);
+if (typeof ResizeObserver !== "undefined") {
+  const viewportObserver = new ResizeObserver(() => resize());
+  viewportObserver.observe(app);
+}
+renderer.domElement.addEventListener("webglcontextlost", (event) => {
+  event.preventDefault();
+  message.textContent = "WebGL context lost — refresh the page";
+  message.classList.remove("hidden");
+});
 window.addEventListener("keydown", (event) => {
   keys.add(event.code);
   if (event.code === "Space") {
@@ -829,14 +885,28 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("keyup", (event) => {
   keys.delete(event.code);
 });
+function applyMouseLook(movementX: number, movementY: number): void {
+  cameraYaw -= movementX * 0.0024;
+  cameraPitch -= movementY * 0.0016;
+}
+
 window.addEventListener("mousemove", (event) => {
   if (document.pointerLockElement !== renderer.domElement) {
     return;
   }
   pointer.x += event.movementX;
   pointer.y += event.movementY;
-  cameraYaw -= event.movementX * 0.0024;
-  cameraPitch -= event.movementY * 0.0016;
+  applyMouseLook(event.movementX, event.movementY);
+});
+
+renderer.domElement.addEventListener("mousemove", (event) => {
+  if (state !== "playing" || document.pointerLockElement === renderer.domElement) {
+    return;
+  }
+  if (event.buttons !== 1) {
+    return;
+  }
+  applyMouseLook(event.movementX, event.movementY);
 });
 window.addEventListener("mousedown", (event) => {
   if (event.button !== 0) {
@@ -860,6 +930,8 @@ renderer.domElement.addEventListener("click", () => {
 
 addProps();
 equipWeapon(equippedWeapon);
+resize();
 setState("start");
-updateCamera(1);
+setMenuCamera();
+renderer.render(scene, camera);
 animate();
