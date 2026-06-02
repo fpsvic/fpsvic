@@ -5,7 +5,8 @@ export type FpsHudMeta = {
 };
 
 export class FpsMeter {
-  visible = false;
+  /** FPS overlay is always shown during play. */
+  readonly alwaysVisible = true;
   smoothedFps = 0;
   renderSmoothedFps = 0;
   renderInstantFps = 0;
@@ -26,14 +27,6 @@ export class FpsMeter {
     this.domTick = 0;
   }
 
-  toggleVisible(): boolean {
-    this.visible = !this.visible;
-    if (this.visible) {
-      this.pushDom(true);
-    }
-    return this.visible;
-  }
-
   /** Call once after each `renderer.render`. */
   endRenderFrame(): void {
     const now = performance.now();
@@ -49,26 +42,19 @@ export class FpsMeter {
     this.renderSmoothedFps = this.renderSmoothedFps * 0.8 + instant * 0.2;
     this.smoothedFps = Math.round(this.renderSmoothedFps);
 
-    if (!this.visible) {
-      return;
-    }
-
     this.domTick += 1;
     if (this.domTick % 4 === 0) {
-      this.pushDom(false);
+      this.pushDom();
     }
   }
 
-  private pushDom(force: boolean): void {
+  private pushDom(): void {
     const fps = Math.round(this.renderSmoothedFps);
     const frameMs = Math.round(1000 / Math.max(this.renderSmoothedFps, 1));
     this.updateDom(fps, {
       frameMs,
       embedded: isEmbeddedPreview(),
     });
-    if (force) {
-      return;
-    }
   }
 }
 

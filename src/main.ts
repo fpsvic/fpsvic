@@ -29,19 +29,52 @@ import {
 import { createBackdropScenery } from "./scenery";
 import { ARENA_RADIUS, createArenaTerrain, sampleTerrainHeight } from "./terrain";
 import { applyTerrainTextureAnisotropy } from "./terrainTextures";
+import {
+  addWeaponToInventory,
+  consumeSlot,
+  createStarterInventory,
+  getEntryIcon,
+  getEntryLabel,
+  getWeaponInSlot,
+  INVENTORY_SLOTS,
+  isBuffItem,
+  type InventorySlot,
+} from "./inventory";
+import { BuffController, getBuffLabel } from "./playerBuffs";
+import { purchaseListing, SHOP_LISTINGS } from "./shop";
+import { getWeaponIndex, WEAPONS, type Weapon } from "./weapons";
 import "./styles.css";
 
 type GameSession = {
   initialized: boolean;
   state: GameState;
+  shards: number;
+  inventory: InventorySlot[];
+  selectedSlot: number;
 };
 
 function getSession(): GameSession {
   const root = window as Window & { __bladeArenaSession?: GameSession };
   if (!root.__bladeArenaSession) {
-    root.__bladeArenaSession = { initialized: false, state: "start" };
+    root.__bladeArenaSession = {
+      initialized: false,
+      state: "start",
+      shards: 120,
+      inventory: createStarterInventory(),
+      selectedSlot: 0,
+    };
   }
-  return root.__bladeArenaSession;
+  const existing = root.__bladeArenaSession;
+  if (!existing.inventory) {
+    existing.inventory = createStarterInventory();
+  }
+  if (existing.shards === undefined) {
+    existing.shards = 120;
+  }
+  if (existing.selectedSlot === undefined) {
+    existing.selectedSlot = 0;
+  }
+  return existing;
 }
 const ATTACK_CHARGE_TIME = 2;
 const CHARGED_DAMAGE_MULTIPLIER = 2.85;
@@ -49,18 +82,6 @@ const CHARGED_RANGE_MULTIPLIER = 1.22;
 const CHARGED_KNOCKBACK_MULTIPLIER = 1.65;
 
 type GameState = "start" | "playing" | "ended";
-
-type Weapon = {
-  name: string;
-  damage: number;
-  range: number;
-  arc: number;
-  cooldown: number;
-  knockback: number;
-  color: THREE.ColorRepresentation;
-  bladeLength: number;
-  handleLength: number;
-};
 
 type Enemy = {
   group: THREE.Group;
@@ -156,53 +177,6 @@ function installBootErrorHandlers(): void {
 resetPreviewSession();
 installBootErrorHandlers();
 
-const weapons: Weapon[] = [
-  {
-    name: "Storm Knife",
-    damage: 26,
-    range: 2.0,
-    arc: Math.PI * 0.56,
-    cooldown: 0.34,
-    knockback: 2.6,
-    color: 0x9eb4c2,
-    bladeLength: 0.9,
-    handleLength: 0.42,
-  },
-  {
-    name: "Knight Sword",
-    damage: 42,
-    range: 2.8,
-    arc: Math.PI * 0.48,
-    cooldown: 0.62,
-    knockback: 3.8,
-    color: 0xb8c4d0,
-    bladeLength: 1.55,
-    handleLength: 0.55,
-  },
-  {
-    name: "Raider Axe",
-    damage: 58,
-    range: 2.45,
-    arc: Math.PI * 0.42,
-    cooldown: 0.9,
-    knockback: 5.2,
-    color: 0x8a7560,
-    bladeLength: 1.15,
-    handleLength: 0.95,
-  },
-  {
-    name: "Crystal Spear",
-    damage: 34,
-    range: 3.8,
-    arc: Math.PI * 0.28,
-    cooldown: 0.7,
-    knockback: 4.4,
-    color: 0xa8b8d8,
-    bladeLength: 2.0,
-    handleLength: 0.9,
-  },
-];
-
 const scene = new THREE.Scene();
 
 const initialViewport = getViewportSize();
@@ -247,7 +221,7 @@ const sunLight = setupLighting(scene);
 const hud = document.createElement("div");
 hud.className = "hud";
 hud.innerHTML = `
-  <div class="fps-panel hidden" data-fps-panel aria-live="polite">
+  <div class="fps-panel" data-fps-panel aria-live="polite">
     <span class="fps-panel__label">Redraw</span>
     <span class="fps-panel__value">FPS: <strong data-fps-value>--</strong></span>
     <span class="fps-panel__ms" data-fps-ms></span>
@@ -255,10 +229,13 @@ hud.innerHTML = `
 
   <div class="top-bar">
     <div class="stat"><span>Health</span><strong data-health>100</strong></div>
+    <div class="stat stat--currency"><span>Shards</span><strong data-shards>120</strong></div>
     <div class="stat"><span>Alive</span><strong data-alive>12</strong></div>
     <div class="stat"><span>Elims</span><strong data-score>0</strong></div>
     <div class="stat"><span>Storm</span><strong data-storm>90m</strong></div>
   </div>
+
+  <div class="buff-bar hidden" data-buff-bar aria-label="Active buffs"></div>
 
   <div class="weapon-card">
     <div class="weapon-name" data-weapon-name>Storm Knife</div>
@@ -275,8 +252,58 @@ hud.innerHTML = `
       <div><kbd>A</kbd> slash / hold 2s charge</div>
       <div><kbd>Space</kbd> jump</div>
       <div><kbd>E</kbd> pick up</div>
+      <div><kbd>1-5</kbd> inventory</div>
+      <div><kbd>B</kbd> shop</div>
       <div><kbd>R</kbd> restart</div>
-      <div><kbd>T</kbd> FPS counter</div>
+    </div>
+  </div>
+
+  <div class="inventory-bar" data-inventory-bar aria-label="Inventory">
+    <button type="button" class="inventory-slot inventory-slot--active" data-inv-slot="0">
+      <span class="inventory-slot__key">1</span>
+      <span class="inventory-slot__icon" data-inv-icon>⚔</span>
+      <span class="inventory-slot__name" data-inv-name>Storm Knife</span>
+      <span class="inventory-slot__qty hidden" data-inv-qty></span>
+    </button>
+    <button type="button" class="inventory-slot" data-inv-slot="1">
+      <span class="inventory-slot__key">2</span>
+      <span class="inventory-slot__icon" data-inv-icon>·</span>
+      <span class="inventory-slot__name" data-inv-name>Empty</span>
+      <span class="inventory-slot__qty hidden" data-inv-qty></span>
+    </button>
+    <button type="button" class="inventory-slot" data-inv-slot="2">
+      <span class="inventory-slot__key">3</span>
+      <span class="inventory-slot__icon" data-inv-icon>·</span>
+      <span class="inventory-slot__name" data-inv-name>Empty</span>
+      <span class="inventory-slot__qty hidden" data-inv-qty></span>
+    </button>
+    <button type="button" class="inventory-slot" data-inv-slot="3">
+      <span class="inventory-slot__key">4</span>
+      <span class="inventory-slot__icon" data-inv-icon>·</span>
+      <span class="inventory-slot__name" data-inv-name>Empty</span>
+      <span class="inventory-slot__qty hidden" data-inv-qty></span>
+    </button>
+    <button type="button" class="inventory-slot" data-inv-slot="4">
+      <span class="inventory-slot__key">5</span>
+      <span class="inventory-slot__icon" data-inv-icon>·</span>
+      <span class="inventory-slot__name" data-inv-name>Empty</span>
+      <span class="inventory-slot__qty hidden" data-inv-qty></span>
+    </button>
+  </div>
+
+  <div class="shop-panel hidden" data-shop-panel>
+    <div class="shop-panel__backdrop" data-shop-close></div>
+    <div class="shop-panel__card">
+      <header class="shop-panel__header">
+        <div>
+          <p class="shop-panel__eyebrow">Valley merchant</p>
+          <h2 class="shop-panel__title">Arena Shop</h2>
+        </div>
+        <div class="shop-panel__balance">Shards: <strong data-shop-shards>0</strong></div>
+        <button type="button" class="shop-panel__close" data-shop-close aria-label="Close shop">×</button>
+      </header>
+      <p class="shop-panel__hint" data-shop-toast>Buy weapons, heals, and buffs. Loot fills your 5 slots.</p>
+      <div class="shop-panel__grid" data-shop-grid></div>
     </div>
   </div>
 
@@ -361,7 +388,7 @@ hud.innerHTML = `
             <span class="title-screen__cta-shine" aria-hidden="true"></span>
           </button>
         </div>
-        <p class="title-screen__hint">Press <kbd>R</kbd> anytime to restart · <kbd>T</kbd> FPS</p>
+        <p class="title-screen__hint">Press <kbd>B</kbd> for shop · <kbd>1-5</kbd> inventory · <kbd>R</kbd> restart</p>
       </div>
       <aside class="title-screen__rail title-screen__rail--right" aria-hidden="true">
         <span>Storm</span>
@@ -410,8 +437,32 @@ const restartButton = requireHudElement<HTMLButtonElement>("[data-restart-button
 const fpsPanel = requireHudElement<HTMLElement>("[data-fps-panel]");
 const fpsValueText = requireHudElement<HTMLElement>("[data-fps-value]");
 const fpsMsText = requireHudElement<HTMLElement>("[data-fps-ms]");
+const shardsText = requireHudElement<HTMLElement>("[data-shards]");
+const buffBar = requireHudElement<HTMLElement>("[data-buff-bar]");
+const inventoryBar = requireHudElement<HTMLElement>("[data-inventory-bar]");
+const shopPanel = requireHudElement<HTMLElement>("[data-shop-panel]");
+const shopShardsText = requireHudElement<HTMLElement>("[data-shop-shards]");
+const shopToast = requireHudElement<HTMLElement>("[data-shop-toast]");
+const shopGrid = requireHudElement<HTMLElement>("[data-shop-grid]");
 const minimapPanel = requireHudElement<HTMLElement>("[data-minimap-panel]");
 const minimapCanvas = requireHudElement<HTMLCanvasElement>("[data-minimap]");
+
+const inventorySlotButtons = Array.from(
+  inventoryBar.querySelectorAll<HTMLButtonElement>("[data-inv-slot]"),
+);
+const inventorySlotIcons = inventorySlotButtons.map(
+  (button) => button.querySelector<HTMLElement>("[data-inv-icon]")!,
+);
+const inventorySlotNames = inventorySlotButtons.map(
+  (button) => button.querySelector<HTMLElement>("[data-inv-name]")!,
+);
+const inventorySlotQty = inventorySlotButtons.map(
+  (button) => button.querySelector<HTMLElement>("[data-inv-qty]")!,
+);
+
+const session = getSession();
+const playerBuffs = new BuffController();
+let shopOpen = false;
 const arenaMinimap = new ArenaMinimap(minimapCanvas, ARENA_RADIUS);
 const fpsMeter = new FpsMeter((fps, meta) => {
   fpsValueText.textContent = String(fps);
@@ -487,7 +538,7 @@ const stormMaterial = new THREE.MeshBasicMaterial({
   depthWrite: false,
   blending: THREE.AdditiveBlending,
 });
-const weaponBladeMaterials = weapons.map(
+const weaponBladeMaterials = WEAPONS.map(
   (weapon) =>
     new THREE.MeshStandardMaterial({
       color: weapon.color,
@@ -561,7 +612,7 @@ const dummy = new THREE.Object3D();
 let state: GameState = getSession().state;
 let playerHealth = 100;
 let score = 0;
-let equippedWeapon = weapons[0];
+let equippedWeapon = WEAPONS[0];
 let equippedWeaponIndex = 0;
 let attackCooldown = 0;
 let attackTime = 0;
@@ -593,10 +644,159 @@ const hudCache = {
   alive: -1,
   score: -1,
   storm: -1,
+  shards: -1,
   healthScale: -1,
   cooldownScale: -1,
   chargeScale: -1,
 };
+
+function getInventory(): InventorySlot[] {
+  return session.inventory;
+}
+
+function syncEquippedFromSelectedSlot(): void {
+  const weapon = getWeaponInSlot(session.inventory, session.selectedSlot) ?? WEAPONS[0];
+  equipWeapon(weapon);
+}
+
+function renderInventoryHud(): void {
+  const slots = getInventory();
+  for (let index = 0; index < INVENTORY_SLOTS; index += 1) {
+    const entry = slots[index];
+    const button = inventorySlotButtons[index];
+    const icon = inventorySlotIcons[index];
+    const name = inventorySlotNames[index];
+    const qty = inventorySlotQty[index];
+    button.classList.toggle("inventory-slot--active", index === session.selectedSlot);
+    button.classList.toggle("inventory-slot--empty", !entry);
+    if (!entry) {
+      icon.textContent = "·";
+      name.textContent = "Empty";
+      qty.classList.add("hidden");
+      qty.textContent = "";
+      continue;
+    }
+    icon.textContent = getEntryIcon(entry);
+    name.textContent = getEntryLabel(entry);
+    if (entry.kind === "stackable" && entry.quantity > 1) {
+      qty.textContent = String(entry.quantity);
+      qty.classList.remove("hidden");
+    } else {
+      qty.classList.add("hidden");
+      qty.textContent = "";
+    }
+  }
+}
+
+function renderBuffHud(): void {
+  if (playerBuffs.active.length === 0) {
+    buffBar.classList.add("hidden");
+    buffBar.replaceChildren();
+    return;
+  }
+  buffBar.classList.remove("hidden");
+  buffBar.replaceChildren(
+    ...playerBuffs.active.map((buff) => {
+      const chip = document.createElement("span");
+      chip.className = "buff-chip";
+      chip.textContent = `${getBuffLabel(buff.id)} ${Math.ceil(buff.remaining)}s`;
+      return chip;
+    }),
+  );
+}
+
+function buildShopGrid(): void {
+  shopGrid.replaceChildren(
+    ...SHOP_LISTINGS.map((listing) => {
+      const card = document.createElement("article");
+      card.className = "shop-card";
+      card.innerHTML = `
+        <span class="shop-card__category">${listing.category}</span>
+        <h3 class="shop-card__name">${listing.name}</h3>
+        <p class="shop-card__desc">${listing.description}</p>
+        <div class="shop-card__footer">
+          <span class="shop-card__price">${listing.price} shards</span>
+          <button type="button" class="shop-card__buy">Buy</button>
+        </div>
+      `;
+      const buy = card.querySelector<HTMLButtonElement>(".shop-card__buy");
+      buy?.addEventListener("click", () => {
+        const { result, shards } = purchaseListing(listing, session.shards, session.inventory);
+        session.shards = shards;
+        shopToast.textContent = result.message;
+        shopShardsText.textContent = String(session.shards);
+        shardsText.textContent = String(session.shards);
+        hudCache.shards = -1;
+        renderInventoryHud();
+        if (result.ok && listing.category === "weapon") {
+          syncEquippedFromSelectedSlot();
+        }
+      });
+      return card;
+    }),
+  );
+}
+
+function setShopOpen(open: boolean): void {
+  shopOpen = open;
+  shopPanel.classList.toggle("hidden", !open);
+  hud.classList.toggle("hud--shop-open", open);
+  if (open) {
+    shopShardsText.textContent = String(session.shards);
+    shopToast.textContent = "Spend shards on gear before you drop in, or mid-match.";
+  }
+}
+
+function toggleShop(): void {
+  setShopOpen(!shopOpen);
+}
+
+function useInventorySlot(slotIndex: number): void {
+  if (slotIndex < 0 || slotIndex >= INVENTORY_SLOTS) {
+    return;
+  }
+  const entry = getInventory()[slotIndex];
+  if (!entry) {
+    session.selectedSlot = slotIndex;
+    syncEquippedFromSelectedSlot();
+    renderInventoryHud();
+    return;
+  }
+
+  if (entry.kind === "weapon") {
+    session.selectedSlot = slotIndex;
+    syncEquippedFromSelectedSlot();
+    renderInventoryHud();
+    return;
+  }
+
+  if (state !== "playing") {
+    session.selectedSlot = slotIndex;
+    renderInventoryHud();
+    return;
+  }
+
+  const consumed = consumeSlot(getInventory(), slotIndex);
+  if (!consumed || consumed.kind !== "stackable") {
+    return;
+  }
+
+  if (consumed.itemId === "medkit") {
+    playerHealth = Math.min(100, playerHealth + 35);
+  } else if (consumed.itemId === "mega_medkit") {
+    playerHealth = Math.min(100, playerHealth + 70);
+  } else if (isBuffItem(consumed.itemId)) {
+    playerBuffs.applyBuff(consumed.itemId);
+  }
+
+  renderInventoryHud();
+  renderBuffHud();
+  hudCache.health = -1;
+}
+
+buildShopGrid();
+renderInventoryHud();
+setShopOpen(false);
 
 const SLASH_POOL_SIZE = 2;
 const ENEMY_UPDATE_NEAR = 42;
@@ -621,10 +821,6 @@ for (let index = 0; index < SLASH_POOL_SIZE; index += 1) {
   slash.userData.life = 0;
   slashEffects.add(slash);
   slashPool.push(slash);
-}
-
-function getWeaponIndex(weapon: Weapon): number {
-  return weapons.indexOf(weapon);
 }
 
 function snapToGround(object: THREE.Object3D): void {
@@ -753,7 +949,7 @@ function createEnemy(x: number, z: number, scale = 1): Enemy {
   const humanoid = createHumanoid(enemyPalette, scale, true);
   group.add(humanoid.root);
 
-  const weapon = weapons[Math.floor(Math.random() * weapons.length)];
+  const weapon = WEAPONS[Math.floor(Math.random() * WEAPONS.length)];
   const weaponMesh = createWeaponMesh(weapon);
   weaponMesh.rotation.z = -0.15;
   weaponMesh.scale.setScalar(scale);
@@ -896,7 +1092,7 @@ function spawnMatch(): void {
   attackChargeTime = 0;
   hudCache.health = -1;
   hudCache.chargeScale = -1;
-  equipWeapon(weapons[0]);
+  syncEquippedFromSelectedSlot();
 
   snapToGround(player);
 
@@ -909,7 +1105,7 @@ function spawnMatch(): void {
   }
 
   for (let index = 0; index < 4; index += 1) {
-    const weapon = weapons[1 + Math.floor(Math.random() * (weapons.length - 1))];
+    const weapon = WEAPONS[1 + Math.floor(Math.random() * (WEAPONS.length - 1))];
     const angle = Math.random() * Math.PI * 2;
     const radius = 8 + Math.random() * 58;
     createPickup(weapon, Math.cos(angle) * radius, Math.sin(angle) * radius);
@@ -928,6 +1124,10 @@ function setState(nextState: GameState): void {
 
   backdropScenery.visible = showStart || inMatch;
   hud.classList.toggle("hud--menu", showStart || showEnd);
+  if (inMatch) {
+    setShopOpen(false);
+  }
+  inventoryBar.classList.toggle("hidden", showEnd);
   renderer.domElement.classList.toggle("game-canvas--playing", inMatch);
   if (inMatch) {
     resetGraphicsSyncState();
@@ -952,13 +1152,18 @@ function startMatch(): void {
     return;
   }
 
+  setShopOpen(false);
   spawnMatch();
+  playerBuffs.clear();
+  renderBuffHud();
   fpsMeter.reset();
   setState("playing");
   useDragAim = true;
   isCanvasAiming = false;
   updateMinimap();
-  message.textContent = "Right-click to move · Drag LMB to aim · Hold A to charge";
+  message.textContent = "Right-click move · Hold A slash · B shop · 1-5 inventory";
+  renderInventoryHud();
+  shardsText.textContent = String(session.shards);
   message.classList.remove("hidden");
 }
 
@@ -975,7 +1180,8 @@ function applyPlayerDamage(amount: number): void {
   if (invulnerable > 0 || state !== "playing") {
     return;
   }
-  playerHealth = Math.max(0, playerHealth - amount);
+  const scaled = amount * playerBuffs.getModifiers().damageTaken;
+  playerHealth = Math.max(0, playerHealth - scaled);
   invulnerable = 0.45;
   cameraShakeDecay = 0.35;
   if (playerHealth <= 0) {
@@ -990,9 +1196,17 @@ function removeEnemy(enemy: Enemy): void {
   }
   enemiesGroup.remove(enemy.group);
   score += 1;
+  const reward = 28 + Math.floor(Math.random() * 14);
+  session.shards += reward;
+  hudCache.shards = -1;
+  const mods = playerBuffs.getModifiers();
+  if (mods.healOnKill > 0) {
+    playerHealth = Math.min(100, playerHealth + mods.healOnKill);
+    hudCache.health = -1;
+  }
 
   if (Math.random() > 0.48) {
-    const weapon = weapons[1 + Math.floor(Math.random() * (weapons.length - 1))];
+    const weapon = WEAPONS[1 + Math.floor(Math.random() * (WEAPONS.length - 1))];
     createPickup(weapon, enemy.group.position.x, enemy.group.position.z);
   }
 
@@ -1012,7 +1226,7 @@ function spawnSlashEffect(
     return;
   }
 
-  const bladeColor = new THREE.Color(weapons[equippedWeaponIndex]?.color ?? 0xffffff);
+  const bladeColor = new THREE.Color(WEAPONS[equippedWeaponIndex]?.color ?? 0xffffff);
   if (charged) {
     bladeColor.lerp(new THREE.Color(0xfff2c2), 0.45);
   }
@@ -1046,8 +1260,10 @@ function applyAttackDamage(charged: boolean): boolean {
     return false;
   }
 
+  const mods = playerBuffs.getModifiers();
   const range = equippedWeapon.range * (charged ? CHARGED_RANGE_MULTIPLIER : 1);
-  const damage = equippedWeapon.damage * (charged ? CHARGED_DAMAGE_MULTIPLIER : 1);
+  const damage =
+    equippedWeapon.damage * (charged ? CHARGED_DAMAGE_MULTIPLIER : 1) * mods.damageDealt;
   const knockback = equippedWeapon.knockback * (charged ? CHARGED_KNOCKBACK_MULTIPLIER : 1);
   const arc = equippedWeapon.arc * (charged ? 1.12 : 1);
 
@@ -1082,7 +1298,20 @@ function pickUpNearest(): void {
   if (!nearestPickup) {
     return;
   }
-  equipWeapon(nearestPickup.weapon);
+  const pickupWeapon = nearestPickup.weapon;
+  const added = addWeaponToInventory(session.inventory, pickupWeapon);
+  if (added) {
+    const slotIndex = session.inventory.findIndex(
+      (slot) => slot?.kind === "weapon" && slot.weaponIndex === getWeaponIndex(pickupWeapon),
+    );
+    if (slotIndex >= 0) {
+      session.selectedSlot = slotIndex;
+    }
+    syncEquippedFromSelectedSlot();
+    renderInventoryHud();
+  } else {
+    equipWeapon(pickupWeapon);
+  }
   pickupsGroup.remove(nearestPickup.group);
   const index = pickups.indexOf(nearestPickup);
   if (index >= 0) {
@@ -1108,7 +1337,7 @@ function updateMovement(delta: number): void {
     } else {
       tempVectorTwo.normalize();
       playerDirection.copy(tempVectorTwo);
-      moveSpeed = 5.2;
+      moveSpeed = 5.2 * playerBuffs.getModifiers().moveSpeed;
       const step = Math.min(distance, moveSpeed * delta);
       player.position.x += tempVectorTwo.x * step;
       player.position.z += tempVectorTwo.z * step;
@@ -1294,7 +1523,8 @@ function updateStorm(delta: number): void {
 
   const distance = Math.hypot(player.position.x, player.position.z);
   if (distance > stormRadius) {
-    applyPlayerDamage(delta * 10);
+    const stormDamage = delta * 10 * (1 - playerBuffs.getModifiers().stormDamageReduction);
+    applyPlayerDamage(stormDamage);
   }
 }
 
@@ -1316,6 +1546,8 @@ function updateSlashEffects(delta: number): void {
 }
 
 function updateWeapon(delta: number): void {
+  playerBuffs.tick(delta);
+  renderBuffHud();
   attackCooldown = Math.max(0, attackCooldown - delta);
   attackTime = Math.max(0, attackTime - delta);
   invulnerable = Math.max(0, invulnerable - delta);
@@ -1376,6 +1608,11 @@ function updateHud(): void {
   if (storm !== hudCache.storm) {
     stormText.textContent = `${storm}m`;
     hudCache.storm = storm;
+  }
+  const shards = session.shards;
+  if (shards !== hudCache.shards) {
+    shardsText.textContent = String(shards);
+    hudCache.shards = shards;
   }
   if (healthScale !== hudCache.healthScale) {
     healthBar.style.transform = `scaleX(${healthScale})`;
@@ -1470,11 +1707,11 @@ window.addEventListener("keydown", (event) => {
   if (event.repeat) {
     return;
   }
-  if (event.code === "Space") {
+  if (event.code === "Space" && !shopOpen) {
     event.preventDefault();
     jump();
   }
-  if (event.code === "KeyA") {
+  if (event.code === "KeyA" && !shopOpen) {
     event.preventDefault();
     beginAttackCharge();
   }
@@ -1484,10 +1721,25 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "KeyR" && state !== "playing") {
     startMatch();
   }
-  if (event.code === "KeyT") {
-    const show = fpsMeter.toggleVisible();
-    fpsPanel.classList.toggle("hidden", !show);
+  if (event.code === "KeyB") {
+    toggleShop();
   }
+  const slotKey = ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5"].indexOf(event.code);
+  if (slotKey >= 0) {
+    useInventorySlot(slotKey);
+  }
+});
+
+for (const button of inventorySlotButtons) {
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const slot = Number(button.dataset.invSlot);
+    useInventorySlot(slot);
+  });
+}
+
+shopPanel.querySelectorAll("[data-shop-close]").forEach((element) => {
+  element.addEventListener("click", () => setShopOpen(false));
 });
 
 window.addEventListener("keyup", (event) => {
@@ -1501,7 +1753,7 @@ renderer.domElement.addEventListener("contextmenu", (event) => {
 });
 
 renderer.domElement.addEventListener("mousedown", (event) => {
-  if (state !== "playing") {
+  if (state !== "playing" || shopOpen) {
     return;
   }
 
@@ -1646,7 +1898,7 @@ function bootGame(): void {
     session.state = "start";
     addProps();
     snapToGround(player);
-    equipWeapon(equippedWeapon);
+    syncEquippedFromSelectedSlot();
     setState("start");
     return;
   }
