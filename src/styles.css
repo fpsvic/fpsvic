@@ -18,7 +18,22 @@ body {
 }
 
 #app {
+  position: relative;
+  width: 100%;
   min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
+  background: #1a3a5c;
+}
+
+#app > canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
 }
 
 .hud {
@@ -26,6 +41,11 @@ body {
   inset: 0;
   z-index: 10;
   pointer-events: none;
+}
+
+.hud--playing .start-panel,
+.hud--playing .end-panel {
+  display: none;
 }
 
 .top-bar,
