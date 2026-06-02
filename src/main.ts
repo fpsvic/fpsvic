@@ -7,6 +7,7 @@ import {
   type HumanoidPalette,
   type HumanoidRig,
 } from "./humanoid";
+import { createHumanoidPalette } from "./humanoidMaterials";
 import {
   addSkyDome,
   configureRenderer,
@@ -462,18 +463,20 @@ const treeFoliageMaterial = new THREE.MeshStandardMaterial({
   emissiveIntensity: 0.05,
   envMapIntensity: 0.5,
 });
-const playerPalette: HumanoidPalette = {
-  skin: createSurfaceMaterial(0xe8b896, 0.58, 0.02),
-  shirt: createSurfaceMaterial(0x4a5e6a, 0.72, 0.18),
-  pants: createSurfaceMaterial(0x2c343c, 0.88, 0.05),
-  boots: createSurfaceMaterial(0x1c1612, 0.9, 0.12),
-};
-const enemyPalette: HumanoidPalette = {
-  skin: createSurfaceMaterial(0xd4a480, 0.58, 0.02),
-  shirt: createSurfaceMaterial(0x5c3238, 0.78, 0.12),
-  pants: createSurfaceMaterial(0x2a2224, 0.9, 0.04),
-  boots: createSurfaceMaterial(0x141010, 0.92, 0.1),
-};
+const playerPalette: HumanoidPalette = createHumanoidPalette({
+  skinColor: 0xe8b896,
+  shirtColor: 0x3d5568,
+  pantsColor: 0x252c34,
+  bootsColor: 0x1a1410,
+  hairColor: 0x3a2c22,
+});
+const enemyPalette: HumanoidPalette = createHumanoidPalette({
+  skinColor: 0xd4a480,
+  shirtColor: 0x6a3038,
+  pantsColor: 0x241c1e,
+  bootsColor: 0x120e0e,
+  hairColor: 0x1e1614,
+});
 const gripMaterial = createSurfaceMaterial(0x221c18, 0.82, 0.08);
 const stormMaterial = new THREE.MeshBasicMaterial({
   color: 0x7a5ad8,
