@@ -5,6 +5,7 @@ import {
   createHumanoid,
   setHumanoidFlash,
   type HumanoidPalette,
+  type HumanoidRig,
 } from "./humanoid";
 import {
   addSkyDome,
@@ -12,7 +13,6 @@ import {
   createBlobShadowTexture,
   setupLighting,
 } from "./graphics";
-import { animateLightFighter, createLightFighter, type LightFighter } from "./lightFighter";
 import { FpsMeter } from "./fpsMeter";
 import { ArenaMinimap } from "./minimap";
 import {
@@ -62,7 +62,7 @@ type Weapon = {
 
 type Enemy = {
   group: THREE.Group;
-  fighter: LightFighter;
+  humanoid: HumanoidRig;
   walkPhase: number;
   health: number;
   maxHealth: number;
@@ -439,11 +439,6 @@ const weaponBladeMaterials = weapons.map(
     }),
 );
 
-const enemyFighterMaterials = {
-  body: enemyPalette.shirt,
-  head: enemyPalette.skin,
-};
-
 const arenaTerrain = createArenaTerrain();
 world.add(arenaTerrain.mesh);
 const backdropScenery = createBackdropScenery();
@@ -694,21 +689,20 @@ function createEnemy(x: number, z: number, scale = 1): Enemy {
   group.position.set(x, 0, z);
   snapToGround(group);
 
-  const fighter = createLightFighter(enemyFighterMaterials, scale);
-  group.add(fighter.root);
+  const humanoid = createHumanoid(enemyPalette, scale, true);
+  group.add(humanoid.root);
 
-  const bladeMaterial = weaponBladeMaterials[Math.floor(Math.random() * weapons.length)];
-  const blade = new THREE.Mesh(sharedGeometries.weaponBlade, bladeMaterial);
-  blade.scale.set(0.7 * scale, 1, 1);
-  blade.position.set(0.42 * scale, 1.05 * scale, 0.08);
-  blade.rotation.z = 0.25;
-  group.add(blade);
+  const weapon = weapons[Math.floor(Math.random() * weapons.length)];
+  const weaponMesh = createWeaponMesh(weapon);
+  weaponMesh.rotation.z = -0.15;
+  weaponMesh.scale.setScalar(scale);
+  humanoid.weaponMount.add(weaponMesh);
 
   enemiesGroup.add(group);
 
   return {
     group,
-    fighter,
+    humanoid,
     walkPhase: Math.random() * Math.PI * 2,
     health: 80 + scale * 20,
     maxHealth: 80 + scale * 20,
@@ -1189,13 +1183,12 @@ function updateEnemies(
     }
 
     snapToGround(enemy.group);
-    if (
-      distToPlayer < 40 &&
-      moveSpeed > 0.05 &&
-      tickFrame % tuning.enemyAnimInterval === 0
-    ) {
-      enemy.walkPhase += delta * (4.5 + moveSpeed * 0.55) * tuning.enemyAnimInterval;
-      animateLightFighter(enemy.fighter, moveSpeed, enemy.walkPhase);
+
+    if (distToPlayer < 48 && tickFrame % tuning.enemyAnimInterval === 0) {
+      enemy.walkPhase += delta * (3.8 + moveSpeed * 0.5) * tuning.enemyAnimInterval;
+      const attackSwing =
+        distance < 1.75 && enemy.cooldown > 0.45 ? 1 : 0;
+      animateHumanoid(enemy.humanoid, moveSpeed, enemy.walkPhase, attackSwing);
     }
   }
 }
