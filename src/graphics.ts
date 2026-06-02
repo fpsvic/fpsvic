@@ -216,6 +216,8 @@ export function setupLighting(scene: THREE.Scene): THREE.DirectionalLight {
 
   const sun = new THREE.DirectionalLight(0xfff4e8, 1.42);
   sun.position.set(52, 68, 28);
+  sun.target.position.set(0, 0, 0);
+  scene.add(sun.target);
   sun.castShadow = true;
   sun.shadow.mapSize.set(512, 512);
   sun.shadow.bias = -0.00015;

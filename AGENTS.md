@@ -6,6 +6,16 @@
 
 **Blade Arena** — browser 3D melee battle royale (Vite + TypeScript + Three.js). No backend.
 
+### Which branch to run
+
+| Branch | What you get |
+|--------|----------------|
+| `main` / `cursor/fix-v1-navy-screen-0a0c` | **v1 prototype only** — simple “Start match” panel, no shop, no FPS overlay |
+| **`cursor/full-game-features-0a0c`** (same as `cursor/realistic-players-0a0c`) | **Full game** — cinematic title, title-screen shop button, in-game shop (`B`), 5-slot inventory, always-on redraw FPS (top-right) |
+| `cursor/performance-optimization-0a0c` | Slim arena + profiler (`P`), no shop/title UX |
+
+For shop + title + FPS, use **`cursor/full-game-features-0a0c`** (or merge PR #7).
+
 ### Services
 
 | Service | Command | Notes |
