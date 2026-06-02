@@ -159,16 +159,37 @@ body {
   position: absolute;
   top: 18px;
   right: 18px;
+  display: grid;
+  gap: 2px;
+  justify-items: end;
   padding: 10px 14px;
   border: 1px solid rgb(255 255 255 / 14%);
   border-radius: 12px;
   background: rgb(12 18 24 / 88%);
   box-shadow: 0 12px 36px rgb(0 0 0 / 32%);
   color: #b8d4ea;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   pointer-events: none;
+}
+
+.fps-panel__label {
+  color: #7a9ab4;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.fps-panel__value {
+  font-size: 13px;
+}
+
+.fps-panel__ms {
+  color: #9eb8d0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .fps-panel strong {

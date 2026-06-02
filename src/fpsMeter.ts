@@ -1,35 +1,35 @@
-/** FPS overlay — reports display refresh when rAF is throttled (common in Desktop iframes). */
+/** Honest redraw FPS — what you see is how often the game actually draws. */
 export type FpsHudMeta = {
-  redrawFps: number;
-  screenHz: number;
+  frameMs: number;
+  embedded: boolean;
 };
 
 export class FpsMeter {
   visible = false;
-  smoothedFps = 60;
-  renderSmoothedFps = 60;
-  renderInstantFps = 60;
+  smoothedFps = 0;
+  renderSmoothedFps = 0;
+  renderInstantFps = 0;
   private readonly updateDom: (fps: number, meta: FpsHudMeta) => void;
   private lastFrameEnd = 0;
-  private readonly screenHz: number;
+  private domTick = 0;
 
   constructor(updateDom: (fps: number, meta: FpsHudMeta) => void) {
     this.updateDom = updateDom;
-    this.screenHz = readScreenRefreshHz();
     this.reset();
   }
 
   reset(): void {
     this.lastFrameEnd = performance.now();
-    this.smoothedFps = this.screenHz;
-    this.renderSmoothedFps = 60;
-    this.renderInstantFps = 60;
+    this.smoothedFps = 0;
+    this.renderSmoothedFps = 0;
+    this.renderInstantFps = 0;
+    this.domTick = 0;
   }
 
   toggleVisible(): boolean {
     this.visible = !this.visible;
     if (this.visible) {
-      this.publish();
+      this.pushDom(true);
     }
     return this.visible;
   }
@@ -44,38 +44,38 @@ export class FpsMeter {
       return;
     }
 
-    if (frameMs > 0) {
-      const instant = 1000 / frameMs;
-      this.renderInstantFps = instant;
-      this.renderSmoothedFps = this.renderSmoothedFps * 0.82 + instant * 0.18;
-    }
-
-    this.publish();
-  }
-
-  private publish(): void {
-    const redraw = Math.round(this.renderSmoothedFps);
-    const measured = redraw;
-    const reported =
-      measured < 24 && this.screenHz >= 48 ? this.screenHz : measured;
-    this.smoothedFps = reported;
-
-    const meta: FpsHudMeta = {
-      redrawFps: redraw,
-      screenHz: this.screenHz,
-    };
+    const instant = 1000 / frameMs;
+    this.renderInstantFps = instant;
+    this.renderSmoothedFps = this.renderSmoothedFps * 0.8 + instant * 0.2;
+    this.smoothedFps = Math.round(this.renderSmoothedFps);
 
     if (!this.visible) {
       return;
     }
-    this.updateDom(reported, meta);
+
+    this.domTick += 1;
+    if (this.domTick % 4 === 0) {
+      this.pushDom(false);
+    }
+  }
+
+  private pushDom(force: boolean): void {
+    const fps = Math.round(this.renderSmoothedFps);
+    const frameMs = Math.round(1000 / Math.max(this.renderSmoothedFps, 1));
+    this.updateDom(fps, {
+      frameMs,
+      embedded: isEmbeddedPreview(),
+    });
+    if (force) {
+      return;
+    }
   }
 }
 
-function readScreenRefreshHz(): number {
-  const screen = window.screen as Screen & { refreshRate?: number };
-  if (typeof screen.refreshRate === "number" && screen.refreshRate >= 30) {
-    return Math.round(screen.refreshRate);
+function isEmbeddedPreview(): boolean {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
   }
-  return 60;
 }

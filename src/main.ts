@@ -22,6 +22,7 @@ import {
   syncEnvironmentRendering,
   syncShadowRendering,
   type PerformanceTuning,
+  type RenderQuality,
 } from "./performance";
 import { createBackdropScenery } from "./scenery";
 import { ARENA_RADIUS, createArenaTerrain, sampleTerrainHeight } from "./terrain";
@@ -222,7 +223,7 @@ try {
 }
 
 renderer.setSize(initialViewport.width, initialViewport.height);
-let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 0.52);
+let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 0.45);
 renderer.setPixelRatio(renderPixelRatio);
 configureRenderer(renderer);
 renderer.domElement.classList.add("game-canvas");
@@ -243,13 +244,10 @@ const sunLight = setupLighting(scene);
 const hud = document.createElement("div");
 hud.className = "hud";
 hud.innerHTML = `
-  <div
-    class="fps-panel hidden"
-    data-fps-panel
-    aria-live="polite"
-    title="Screen refresh rate (game redraws in background)"
-  >
-    FPS: <strong data-fps-value>60</strong>
+  <div class="fps-panel hidden" data-fps-panel aria-live="polite">
+    <span class="fps-panel__label">Redraw</span>
+    <span class="fps-panel__value">FPS: <strong data-fps-value>--</strong></span>
+    <span class="fps-panel__ms" data-fps-ms></span>
   </div>
 
   <div class="top-bar">
@@ -352,15 +350,16 @@ const startButton = requireHudElement<HTMLButtonElement>("[data-start-button]");
 const restartButton = requireHudElement<HTMLButtonElement>("[data-restart-button]");
 const fpsPanel = requireHudElement<HTMLElement>("[data-fps-panel]");
 const fpsValueText = requireHudElement<HTMLElement>("[data-fps-value]");
+const fpsMsText = requireHudElement<HTMLElement>("[data-fps-ms]");
 const minimapPanel = requireHudElement<HTMLElement>("[data-minimap-panel]");
 const minimapCanvas = requireHudElement<HTMLCanvasElement>("[data-minimap]");
 const arenaMinimap = new ArenaMinimap(minimapCanvas, ARENA_RADIUS);
 const fpsMeter = new FpsMeter((fps, meta) => {
   fpsValueText.textContent = String(fps);
-  fpsPanel.title =
-    meta.redrawFps < 24
-      ? `Panel refresh ~${meta.screenHz} Hz · Game redraw ~${meta.redrawFps} FPS`
-      : `Game redraw ~${meta.redrawFps} FPS`;
+  fpsMsText.textContent = `${meta.frameMs} ms/frame`;
+  fpsPanel.title = meta.embedded
+    ? `Actual game redraw rate (${fps} FPS). The Desktop pane often caps this near 15 — open http://localhost:5173 in Chrome for higher FPS.`
+    : `Actual game redraw rate (${fps} FPS, ${meta.frameMs} ms per frame).`;
 });
 
 const clock = new THREE.Clock();
@@ -530,6 +529,7 @@ const hudCache = {
 const SLASH_POOL_SIZE = 2;
 const ENEMY_UPDATE_NEAR = 42;
 let tickFrame = 0;
+let cachedRenderQuality: RenderQuality = getRenderQuality(72);
 let isCanvasAiming = false;
 let useDragAim = false;
 const slashPool: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[] = [];
@@ -1326,23 +1326,24 @@ function updateHud(): void {
 function tick(): void {
   const delta = Math.min(clock.getDelta(), 0.05);
   tickFrame += 1;
-  const qualityFps =
-    tickFrame < 45
-      ? 72
-      : getEffectiveFps(fpsMeter.renderSmoothedFps, fpsMeter.renderInstantFps);
-  const effectiveFps = qualityFps;
-  const quality = getRenderQuality(effectiveFps);
-  const { tuning } = quality;
-  renderPixelRatio = applyAdaptivePixelRatio(
-    renderer,
-    quality.pixelRatioCap,
-    renderPixelRatio,
-  );
-  const playing = state === "playing";
-  if (tickFrame % 20 === 0) {
+  let quality = cachedRenderQuality;
+  if (tickFrame % 24 === 0) {
+    const qualityFps =
+      tickFrame < 45
+        ? 72
+        : getEffectiveFps(fpsMeter.renderSmoothedFps, fpsMeter.renderInstantFps);
+    quality = getRenderQuality(qualityFps);
+    cachedRenderQuality = quality;
+    renderPixelRatio = applyAdaptivePixelRatio(
+      renderer,
+      quality.pixelRatioCap,
+      renderPixelRatio,
+    );
     syncEnvironmentRendering(scene, false, renderer);
     syncShadowRendering(renderer, sunLight, arenaTerrain.mesh, false);
   }
+  const { tuning } = quality;
+  const playing = state === "playing";
 
   if (playing) {
     updateMovement(delta);
@@ -1358,15 +1359,7 @@ function tick(): void {
     if (attackTime > 0) {
       updateSlashEffects(delta);
     }
-    const needsSmoothCamera =
-      isCameraRotating ||
-      cameraShakeDecay > 0 ||
-      hasMoveTarget ||
-      attackTime > 0 ||
-      tickFrame % tuning.cameraIdleInterval === 0;
-    if (needsSmoothCamera) {
-      updateCamera(delta);
-    }
+    updateCamera(delta);
     if (tickFrame % tuning.hudFrameInterval === 0) {
       updateHud();
     }

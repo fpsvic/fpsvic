@@ -33,3 +33,4 @@ After environment setup, a terminal may auto-launch Chrome to that URL once Vite
 - If the preview iframe has not laid out yet, `ResizeObserver` on `#app` resizes the canvas once dimensions are known.
 - Uncaught startup errors show a **Blade Arena could not start** panel instead of a blank view.
 - Do not use `#app canvas` in CSS — it also matches the minimap and stretches the 2D map fullscreen (looks like a circle arena and triangle player). Use `#app > canvas.game-canvas` only.
+- **FPS overlay (T)** shows honest **redraw FPS** (how often WebGL draws), not monitor refresh. The Desktop VM pane often caps redraw near **15 FPS**; open **http://localhost:5173/** in normal Chrome for smoother play.
