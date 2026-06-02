@@ -28,6 +28,7 @@ import {
 } from "./performance";
 import { createBackdropScenery } from "./scenery";
 import { ARENA_RADIUS, createArenaTerrain, sampleTerrainHeight } from "./terrain";
+import { applyTerrainTextureAnisotropy } from "./terrainTextures";
 import "./styles.css";
 
 type GameSession = {
@@ -499,6 +500,7 @@ const weaponBladeMaterials = weapons.map(
 );
 
 const arenaTerrain = createArenaTerrain();
+applyTerrainTextureAnisotropy(renderer);
 world.add(arenaTerrain.mesh);
 const backdropScenery = createBackdropScenery();
 backdropScenery.visible = false;

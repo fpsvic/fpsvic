@@ -56,20 +56,28 @@ function bakeTerrainLayer(size: number, arenaRadius: number): HTMLCanvasElement 
 
       const height = sampleTerrainHeight(wx, wz);
       const pathMask =
-        THREE.MathUtils.smoothstep(dist, 5, 18) *
-        (1 - THREE.MathUtils.smoothstep(dist, 18, 32));
+        THREE.MathUtils.smoothstep(dist, 4, 16) *
+        (1 - THREE.MathUtils.smoothstep(dist, 16, 34));
+      const heightNorm = THREE.MathUtils.clamp(height / 2.5, 0, 1);
+      const rockMask = THREE.MathUtils.smoothstep(heightNorm, 0.42, 0.88);
 
-      const grassR = 58 + height * 12;
-      const grassG = 98 + height * 18;
-      const grassB = 52 + height * 8;
-      const pathR = 168;
-      const pathG = 138;
-      const pathB = 98;
-      const t = pathMask * 0.82;
+      const grassR = 48 + height * 10;
+      const grassG = 92 + height * 16;
+      const grassB = 38 + height * 6;
+      const pathR = 128;
+      const pathG = 98;
+      const pathB = 68;
+      const rockR = 96;
+      const rockG = 108;
+      const rockB = 92;
 
-      image.data[index] = Math.floor(grassR * (1 - t) + pathR * t);
-      image.data[index + 1] = Math.floor(grassG * (1 - t) + pathG * t);
-      image.data[index + 2] = Math.floor(grassB * (1 - t) + pathB * t);
+      const dirtT = pathMask * 0.9;
+      const rockT = rockMask * 0.55 * (1 - pathMask * 0.4);
+      const grassT = 1 - dirtT - rockT;
+
+      image.data[index] = Math.floor(grassR * grassT + pathR * dirtT + rockR * rockT);
+      image.data[index + 1] = Math.floor(grassG * grassT + pathG * dirtT + rockG * rockT);
+      image.data[index + 2] = Math.floor(grassB * grassT + pathB * dirtT + rockB * rockT);
       image.data[index + 3] = 255;
     }
   }

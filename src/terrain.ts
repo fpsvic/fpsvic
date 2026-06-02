@@ -1,9 +1,10 @@
 import * as THREE from "three";
-import { createGroundColorTexture, createGroundNormalTexture } from "./graphics";
+import { createTerrainSplatMaterial } from "./terrainMaterial";
+import { getTerrainTextures } from "./terrainTextures";
 
 export const ARENA_RADIUS = 90;
 const TERRAIN_SIZE = 184;
-const TERRAIN_SEGMENTS = 12;
+const TERRAIN_SEGMENTS = 112;
 const HEIGHT_CACHE_STEP = 2;
 const heightCache = new Map<number, number>();
 
@@ -37,7 +38,11 @@ function noise2(x: number, z: number): number {
 }
 
 function fbm(x: number, z: number): number {
-  return noise2(x * 0.045, z * 0.045) * 0.65 + noise2(x * 0.09, z * 0.09) * 0.35;
+  return (
+    noise2(x * 0.045, z * 0.045) * 0.55 +
+    noise2(x * 0.09, z * 0.09) * 0.28 +
+    noise2(x * 0.18, z * 0.18) * 0.17
+  );
 }
 
 export function sampleTerrainHeight(x: number, z: number): number {
@@ -52,13 +57,23 @@ export function sampleTerrainHeight(x: number, z: number): number {
     return -2.5;
   }
 
-  let height = fbm(x, z) * 2.2 + Math.pow(Math.max(0, 1 - dist / ARENA_RADIUS), 1.35) * 0.35;
+  let height = fbm(x, z) * 2.35 + Math.pow(Math.max(0, 1 - dist / ARENA_RADIUS), 1.35) * 0.38;
+  height += noise2(x * 0.22, z * 0.22) * 0.12;
   height *= THREE.MathUtils.lerp(0.35, 1, THREE.MathUtils.smoothstep(dist, 8, 26));
   height *= THREE.MathUtils.smoothstep(ARENA_RADIUS, ARENA_RADIUS - 10, dist);
 
   const result = Math.max(0, height);
   heightCache.set(key, result);
   return result;
+}
+
+function sampleSlope(x: number, z: number): number {
+  const delta = 1.4;
+  const hL = sampleTerrainHeight(x - delta, z);
+  const hR = sampleTerrainHeight(x + delta, z);
+  const hD = sampleTerrainHeight(x, z - delta);
+  const hU = sampleTerrainHeight(x, z + delta);
+  return Math.hypot(hR - hL, hU - hD) / (delta * 2);
 }
 
 function buildTerrainGeometry(): THREE.BufferGeometry {
@@ -72,11 +87,6 @@ function buildTerrainGeometry(): THREE.BufferGeometry {
 
   const positions = geometry.attributes.position;
   const colors = new Float32Array(positions.count * 3);
-  const color = new THREE.Color();
-  const grassLow = new THREE.Color(0x3f6f3e);
-  const grassHigh = new THREE.Color(0x5f8f52);
-  const path = new THREE.Color(0xc4aa7a);
-  const rock = new THREE.Color(0x6a7268);
 
   for (let index = 0; index < positions.count; index += 1) {
     const x = positions.getX(index);
@@ -86,21 +96,32 @@ function buildTerrainGeometry(): THREE.BufferGeometry {
 
     const dist = Math.hypot(x, z);
     const pathMask =
-      THREE.MathUtils.smoothstep(dist, 5, 18) *
-      (1 - THREE.MathUtils.smoothstep(dist, 18, 32));
-    const heightBlend = THREE.MathUtils.clamp(height / 2.4, 0, 1);
+      THREE.MathUtils.smoothstep(dist, 4, 16) *
+      (1 - THREE.MathUtils.smoothstep(dist, 16, 34));
+    const slope = sampleSlope(x, z);
+    const heightNorm = THREE.MathUtils.clamp(height / 2.5, 0, 1);
+    const rockMask =
+      THREE.MathUtils.smoothstep(heightNorm, 0.42, 0.88) *
+      THREE.MathUtils.smoothstep(slope, 0.14, 0.52);
+    const wetLow = (1 - heightNorm) * THREE.MathUtils.smoothstep(dist, 12, 42) * 0.12;
 
-    color.copy(grassLow).lerp(grassHigh, heightBlend);
-    color.lerp(path, pathMask * 0.85);
-    color.lerp(rock, heightBlend * 0.22);
+    let grassWeight = (1 - pathMask) * (1 - rockMask * 0.92) + wetLow;
+    let dirtWeight = pathMask * 0.92 + wetLow * 0.35;
+    let rockWeight = rockMask * 0.95;
 
-    colors[index * 3] = color.r;
-    colors[index * 3 + 1] = color.g;
-    colors[index * 3 + 2] = color.b;
+    const weightSum = grassWeight + dirtWeight + rockWeight;
+    grassWeight /= weightSum;
+    dirtWeight /= weightSum;
+    rockWeight /= weightSum;
+
+    colors[index * 3] = grassWeight;
+    colors[index * 3 + 1] = dirtWeight;
+    colors[index * 3 + 2] = rockWeight;
   }
 
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geometry.computeVertexNormals();
+  geometry.attributes.position.needsUpdate = true;
   return geometry;
 }
 
@@ -110,18 +131,12 @@ export type ArenaTerrain = {
 };
 
 export function createArenaTerrain(): ArenaTerrain {
-  const material = new THREE.MeshStandardMaterial({
-    map: createGroundColorTexture(),
-    normalMap: createGroundNormalTexture(),
-    normalScale: new THREE.Vector2(0.48, 0.48),
-    vertexColors: true,
-    roughness: 0.88,
-    metalness: 0.04,
-    envMapIntensity: 0.62,
-  });
+  const textures = getTerrainTextures();
+  const material = createTerrainSplatMaterial(textures);
 
   const mesh = new THREE.Mesh(buildTerrainGeometry(), material);
   mesh.receiveShadow = true;
+  mesh.castShadow = false;
 
   return {
     mesh,

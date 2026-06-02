@@ -212,9 +212,9 @@ export function addSkyDome(scene: THREE.Scene): THREE.Color {
 
 export function setupLighting(scene: THREE.Scene): THREE.DirectionalLight {
   scene.add(new THREE.AmbientLight(0x8aa4c4, 0.18));
-  scene.add(new THREE.HemisphereLight(0xc8e8ff, 0x3d5234, 0.58));
+  scene.add(new THREE.HemisphereLight(0xc8e8ff, 0x4a5c38, 0.62));
 
-  const sun = new THREE.DirectionalLight(0xfff2dc, 1.35);
+  const sun = new THREE.DirectionalLight(0xfff4e8, 1.42);
   sun.position.set(52, 68, 28);
   sun.castShadow = true;
   sun.shadow.mapSize.set(512, 512);
