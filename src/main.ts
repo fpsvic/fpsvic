@@ -286,30 +286,86 @@ hud.innerHTML = `
   <div class="center-message hidden" data-message></div>
 
   <div class="title-screen start-panel" data-start-panel>
-    <div class="title-screen__backdrop" aria-hidden="true"></div>
-    <div class="title-screen__grid" aria-hidden="true"></div>
-    <div class="title-screen__orb title-screen__orb--left" aria-hidden="true"></div>
-    <div class="title-screen__orb title-screen__orb--right" aria-hidden="true"></div>
-    <div class="title-screen__content">
-      <p class="title-screen__eyebrow">Melee battle royale</p>
-      <h1 class="title-screen__logo">
-        <span class="title-screen__logo-line">Blade</span>
-        <span class="title-screen__logo-line title-screen__logo-line--accent">Arena</span>
-      </h1>
-      <p class="title-screen__tagline">
-        Fight up close in a living arena. Loot blades, hold the storm, and cut through every
-        challenger.
-      </p>
-      <ul class="title-screen__features">
-        <li>Right-click to move</li>
-        <li>Hold <kbd>A</kbd> to charge slashes</li>
-        <li>Space to jump · shrinking storm</li>
-      </ul>
-      <button class="title-screen__cta" type="button" data-start-button>
-        <span class="title-screen__cta-text">Enter the Arena</span>
-        <span class="title-screen__cta-shine" aria-hidden="true"></span>
-      </button>
-      <p class="title-screen__hint">Press <kbd>R</kbd> anytime to restart a match</p>
+    <div class="title-screen__cinema" aria-hidden="true">
+      <div class="title-screen__backdrop"></div>
+      <div class="title-screen__aurora"></div>
+      <div class="title-screen__grid"></div>
+      <div class="title-screen__arena-glow"></div>
+      <div class="title-screen__ring"></div>
+      <div class="title-screen__scanlines"></div>
+      <div class="title-screen__vignette"></div>
+      <div class="title-screen__sparks">
+        <span class="title-screen__spark"></span>
+        <span class="title-screen__spark"></span>
+        <span class="title-screen__spark"></span>
+        <span class="title-screen__spark"></span>
+        <span class="title-screen__spark"></span>
+        <span class="title-screen__spark"></span>
+        <span class="title-screen__spark"></span>
+        <span class="title-screen__spark"></span>
+        <span class="title-screen__spark"></span>
+        <span class="title-screen__spark"></span>
+        <span class="title-screen__spark"></span>
+        <span class="title-screen__spark"></span>
+      </div>
+      <div class="title-screen__slash title-screen__slash--a"></div>
+      <div class="title-screen__slash title-screen__slash--b"></div>
+      <div class="title-screen__orb title-screen__orb--left"></div>
+      <div class="title-screen__orb title-screen__orb--right"></div>
+    </div>
+    <div class="title-screen__layout">
+      <aside class="title-screen__rail title-screen__rail--left" aria-hidden="true">
+        <span>Loot</span>
+        <span>Charge</span>
+        <span>Survive</span>
+      </aside>
+      <div class="title-screen__content">
+        <p class="title-screen__eyebrow">
+          <span class="title-screen__eyebrow-dot"></span>
+          Live melee battle royale
+        </p>
+        <h1 class="title-screen__logo">
+          <span class="title-screen__logo-line">Blade</span>
+          <span class="title-screen__logo-line title-screen__logo-line--accent">Arena</span>
+        </h1>
+        <p class="title-screen__tagline">
+          Drop into a living valley arena. Outposition rivals, steal their weapons, and cut through
+          the storm before it swallows you.
+        </p>
+        <div class="title-screen__stats">
+          <div class="title-screen__stat">
+            <strong>12</strong>
+            <span>Fighters</span>
+          </div>
+          <div class="title-screen__stat">
+            <strong>4</strong>
+            <span>Blades</span>
+          </div>
+          <div class="title-screen__stat">
+            <strong>1</strong>
+            <span>Storm</span>
+          </div>
+        </div>
+        <ul class="title-screen__features">
+          <li><kbd>RMB</kbd> move</li>
+          <li><kbd>Drag</kbd> aim</li>
+          <li><kbd>A</kbd> charge slash</li>
+          <li><kbd>Space</kbd> jump</li>
+        </ul>
+        <div class="title-screen__cta-wrap">
+          <button class="title-screen__cta" type="button" data-start-button>
+            <span class="title-screen__cta-ring" aria-hidden="true"></span>
+            <span class="title-screen__cta-text">Enter the Arena</span>
+            <span class="title-screen__cta-shine" aria-hidden="true"></span>
+          </button>
+        </div>
+        <p class="title-screen__hint">Press <kbd>R</kbd> anytime to restart · <kbd>T</kbd> FPS</p>
+      </div>
+      <aside class="title-screen__rail title-screen__rail--right" aria-hidden="true">
+        <span>Storm</span>
+        <span>Closes</span>
+        <span>Fast</span>
+      </aside>
     </div>
   </div>
 
@@ -865,7 +921,7 @@ function setState(nextState: GameState): void {
   const showMinimap = nextState === "playing";
   const inMatch = nextState === "playing";
 
-  backdropScenery.visible = inMatch;
+  backdropScenery.visible = showStart || inMatch;
   hud.classList.toggle("hud--menu", showStart || showEnd);
   renderer.domElement.classList.toggle("game-canvas--playing", inMatch);
   if (inMatch) {
@@ -1109,8 +1165,8 @@ function jump(): void {
 }
 
 function setMenuCamera(): void {
-  camera.position.set(52, 36, 52);
-  camera.lookAt(0, 5, 0);
+  camera.position.set(64, 32, 68);
+  camera.lookAt(0, 7, 0);
 }
 
 function updateCamera(delta: number): void {
