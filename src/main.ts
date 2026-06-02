@@ -165,6 +165,9 @@ hud.innerHTML = `
   <div class="center-message hidden" data-message></div>
 
   <div class="start-panel" data-start-panel>
+    <p class="desktop-hint hidden" data-desktop-hint>
+      You are on the cloud Desktop — this window is the game. Click <strong>Start match</strong> below (not the browser new-tab page).
+    </p>
     <h1>Blade Drop Arena</h1>
     <p>Drop into a stylized 3D battle arena where every fight is close range. Outlast the bots, loot stronger knives, swords, axes, and spears, and stay inside the shrinking storm ring.</p>
     <button data-start-button>Start match</button>
@@ -201,6 +204,11 @@ const endTitle = requireHudElement<HTMLElement>("[data-end-title]");
 const endCopy = requireHudElement<HTMLElement>("[data-end-copy]");
 const startButton = requireHudElement<HTMLButtonElement>("[data-start-button]");
 const restartButton = requireHudElement<HTMLButtonElement>("[data-restart-button]");
+const desktopHint = requireHudElement<HTMLElement>("[data-desktop-hint]");
+
+if (new URLSearchParams(window.location.search).get("from") === "desktop") {
+  desktopHint.classList.remove("hidden");
+}
 const profilerPanel = requireHudElement<HTMLElement>("[data-profiler-panel]");
 const profilerBody = requireHudElement<HTMLElement>("[data-profiler-body]");
 

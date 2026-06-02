@@ -29,6 +29,9 @@ Single browser app: **Blade Drop Arena** (`fpsvic`) — Vite + TypeScript + Thre
 ### Gotchas
 
 - The game starts on a **start panel**; click **Start match** (or press `R` after a match ends) before movement and combat work.
+- **Desktop tab ≠ embedded game:** Desktop streams the **whole VM screen**. You often see wallpaper or an empty Chrome window—that is normal until Chrome opens the game URL.
+- **On Desktop, open the game:** wait for the **“Open game in Desktop Chrome”** terminal (runs `.cursor/open-desktop-game.sh`), or in VM Chrome go to **http://localhost:5173/** and click **Start match**. Do not stay on Chrome’s default new-tab page.
+- **Easier than Desktop:** use the agent **plug icon → forward port 5173 → open `http://localhost:5173`** in Cursor’s built-in browser (game only, no VM desktop).
 - **Desktop preview / iframe:** pointer lock is often blocked. The game falls back to **drag on the canvas to aim**; WASD and click-to-attack still work.
 - If Desktop shows a blank page, confirm `npm run dev` is running and the preview URL uses port **5173** (not a stale port).
 - `npm run build` may warn about chunk size (>500 kB); that is expected for the bundled Three.js app.

@@ -6,6 +6,10 @@
       "name": "Blade Arena dev",
       "command": "npm run dev",
       "ports": [5173]
+    },
+    {
+      "name": "Open game in Desktop Chrome",
+      "command": "bash .cursor/open-desktop-game.sh"
     }
   ]
 }

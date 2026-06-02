@@ -231,6 +231,17 @@ body {
   line-height: 1.55;
 }
 
+.desktop-hint {
+  padding: 10px 14px;
+  border: 1px solid rgb(255 213 107 / 40%);
+  border-radius: 12px;
+  background: rgb(255 213 107 / 12%);
+  color: #ffe8b8;
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: left;
+}
+
 .start-panel button,
 .end-panel button {
   width: fit-content;
