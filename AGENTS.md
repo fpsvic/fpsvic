@@ -32,3 +32,4 @@ After environment setup, a terminal may auto-launch Chrome to that URL once Vite
 - HMR can restore a bad session — full page reload fixes it; embedded preview always resets to the title screen.
 - If the preview iframe has not laid out yet, `ResizeObserver` on `#app` resizes the canvas once dimensions are known.
 - Uncaught startup errors show a **Blade Arena could not start** panel instead of a blank view.
+- Do not use `#app canvas` in CSS — it also matches the minimap and stretches the 2D map fullscreen (looks like a circle arena and triangle player). Use `#app > canvas.game-canvas` only.

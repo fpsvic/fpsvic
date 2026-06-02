@@ -216,6 +216,7 @@ try {
 renderer.setSize(initialViewport.width, initialViewport.height);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
 configureRenderer(renderer);
+renderer.domElement.classList.add("game-canvas");
 renderer.domElement.setAttribute("aria-label", "Blade Arena arena view");
 app.querySelector(".boot-loading")?.remove();
 app.appendChild(renderer.domElement);

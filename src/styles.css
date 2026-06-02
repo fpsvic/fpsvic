@@ -63,7 +63,8 @@ body {
   line-height: 1.5;
 }
 
-#app canvas {
+/* Only the main WebGL view — not the HUD minimap canvas (also under #app). */
+#app > canvas.game-canvas {
   position: fixed;
   inset: 0;
   z-index: 0;
@@ -80,10 +81,8 @@ body {
   z-index: 5;
 }
 
-canvas {
+.game-canvas {
   display: block;
-  width: 100%;
-  height: 100%;
 }
 
 .hud {
