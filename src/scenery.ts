@@ -2,29 +2,18 @@ import * as THREE from "three";
 import { ARENA_RADIUS, sampleTerrainHeight } from "./terrain";
 
 const mountainGeometry = new THREE.ConeGeometry(1, 1, 5);
-const mountainMaterial = new THREE.MeshStandardMaterial({
+const mountainMaterial = new THREE.MeshLambertMaterial({
   color: 0x3a4d5e,
-  roughness: 0.95,
-  metalness: 0.02,
-  envMapIntensity: 0.35,
   fog: true,
 });
 
 const trunkGeometry = new THREE.CylinderGeometry(0.14, 0.2, 1.15, 4);
 const foliageGeometry = new THREE.ConeGeometry(0.95, 2.35, 5);
-const trunkMaterial = new THREE.MeshStandardMaterial({
-  color: 0x4a3528,
-  roughness: 0.88,
-  metalness: 0.02,
-  envMapIntensity: 0.45,
-});
-const foliageMaterial = new THREE.MeshStandardMaterial({
+const trunkMaterial = new THREE.MeshLambertMaterial({ color: 0x4a3528 });
+const foliageMaterial = new THREE.MeshLambertMaterial({
   color: 0x2f5c38,
-  roughness: 0.82,
-  metalness: 0.02,
   emissive: new THREE.Color(0x142818),
   emissiveIntensity: 0.06,
-  envMapIntensity: 0.4,
 });
 
 const dummy = new THREE.Object3D();
@@ -114,14 +103,14 @@ export function createBackdropScenery(): THREE.Group {
   const scenery = new THREE.Group();
   scenery.name = "backdrop-scenery";
 
-  const mountainCount = 20;
+  const mountainCount = 14;
   const mountains = new THREE.InstancedMesh(mountainGeometry, mountainMaterial, mountainCount);
   mountains.castShadow = false;
   mountains.frustumCulled = true;
   placeMountainInstances(mountains, mountainCount);
   scenery.add(mountains);
 
-  const forestCount = 46;
+  const forestCount = 28;
   const trunks = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, forestCount);
   const foliage = new THREE.InstancedMesh(foliageGeometry, foliageMaterial, forestCount);
   trunks.castShadow = false;

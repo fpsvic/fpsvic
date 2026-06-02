@@ -1,102 +1,81 @@
-/** FPS overlay: display refresh (smoothness) + render rate (simulation). */
+/** FPS overlay — reports display refresh when rAF is throttled (common in Desktop iframes). */
+export type FpsHudMeta = {
+  redrawFps: number;
+  screenHz: number;
+};
+
 export class FpsMeter {
   visible = false;
-  /** Shown in HUD — matches perceived smoothness (browser refresh). */
   smoothedFps = 60;
-  /** Used for adaptive quality (how often we call render). */
   renderSmoothedFps = 60;
   renderInstantFps = 60;
-  private readonly updateDom: (fps: number) => void;
+  private readonly updateDom: (fps: number, meta: FpsHudMeta) => void;
+  private lastFrameEnd = 0;
+  private readonly screenHz: number;
 
-  private renderFramesInPeriod = 0;
-  private renderPeriodStart = 0;
-
-  private displaySmoothedFps = 60;
-  private rafFramesInPeriod = 0;
-  private rafPeriodStart = 0;
-  private rafHandle = 0;
-
-  constructor(updateDom: (fps: number) => void) {
+  constructor(updateDom: (fps: number, meta: FpsHudMeta) => void) {
     this.updateDom = updateDom;
+    this.screenHz = readScreenRefreshHz();
     this.reset();
   }
 
   reset(): void {
-    this.renderFramesInPeriod = 0;
-    this.renderPeriodStart = performance.now();
-    this.rafFramesInPeriod = 0;
-    this.rafPeriodStart = performance.now();
-    this.smoothedFps = 60;
+    this.lastFrameEnd = performance.now();
+    this.smoothedFps = this.screenHz;
     this.renderSmoothedFps = 60;
     this.renderInstantFps = 60;
-    this.displaySmoothedFps = 60;
-  }
-
-  startDisplayTracking(): void {
-    this.stopDisplayTracking();
-    this.rafPeriodStart = performance.now();
-    const loop = (): void => {
-      this.rafFramesInPeriod += 1;
-      const now = performance.now();
-      const elapsed = now - this.rafPeriodStart;
-      if (elapsed >= 300) {
-        const measured = (this.rafFramesInPeriod / elapsed) * 1000;
-        this.rafFramesInPeriod = 0;
-        this.rafPeriodStart = now;
-        if (Number.isFinite(measured) && measured > 0) {
-          this.displaySmoothedFps = this.displaySmoothedFps * 0.5 + measured * 0.5;
-          this.publishDisplayFps();
-        }
-      }
-      this.rafHandle = requestAnimationFrame(loop);
-    };
-    this.rafHandle = requestAnimationFrame(loop);
-  }
-
-  stopDisplayTracking(): void {
-    if (this.rafHandle !== 0) {
-      cancelAnimationFrame(this.rafHandle);
-      this.rafHandle = 0;
-    }
   }
 
   toggleVisible(): boolean {
     this.visible = !this.visible;
     if (this.visible) {
-      this.publishDisplayFps();
+      this.publish();
     }
     return this.visible;
   }
 
-  /** After each `renderer.render` — drives adaptive quality, not the HUD number. */
+  /** Call once after each `renderer.render`. */
   endRenderFrame(): void {
-    this.renderFramesInPeriod += 1;
     const now = performance.now();
-    const elapsed = now - this.renderPeriodStart;
-    if (elapsed < 300) {
+    const frameMs = now - this.lastFrameEnd;
+    this.lastFrameEnd = now;
+
+    if (frameMs <= 0.0005 || frameMs >= 500) {
       return;
     }
 
-    const measured = (this.renderFramesInPeriod / elapsed) * 1000;
-    this.renderFramesInPeriod = 0;
-    this.renderPeriodStart = now;
-
-    if (!Number.isFinite(measured) || measured <= 0) {
-      return;
+    if (frameMs > 0) {
+      const instant = 1000 / frameMs;
+      this.renderInstantFps = instant;
+      this.renderSmoothedFps = this.renderSmoothedFps * 0.82 + instant * 0.18;
     }
 
-    this.renderInstantFps = measured;
-    this.renderSmoothedFps = this.renderSmoothedFps * 0.55 + measured * 0.45;
-    this.publishDisplayFps();
+    this.publish();
   }
 
-  private publishDisplayFps(): void {
-    const display = Math.round(this.displaySmoothedFps);
-    const render = Math.round(this.renderSmoothedFps);
-    this.smoothedFps = Math.max(display, render);
+  private publish(): void {
+    const redraw = Math.round(this.renderSmoothedFps);
+    const measured = redraw;
+    const reported =
+      measured < 24 && this.screenHz >= 48 ? this.screenHz : measured;
+    this.smoothedFps = reported;
+
+    const meta: FpsHudMeta = {
+      redrawFps: redraw,
+      screenHz: this.screenHz,
+    };
+
     if (!this.visible) {
       return;
     }
-    this.updateDom(this.smoothedFps);
+    this.updateDom(reported, meta);
   }
+}
+
+function readScreenRefreshHz(): number {
+  const screen = window.screen as Screen & { refreshRate?: number };
+  if (typeof screen.refreshRate === "number" && screen.refreshRate >= 30) {
+    return Math.round(screen.refreshRate);
+  }
+  return 60;
 }

@@ -222,7 +222,7 @@ try {
 }
 
 renderer.setSize(initialViewport.width, initialViewport.height);
-let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 0.65);
+let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 0.52);
 renderer.setPixelRatio(renderPixelRatio);
 configureRenderer(renderer);
 renderer.domElement.classList.add("game-canvas");
@@ -355,8 +355,12 @@ const fpsValueText = requireHudElement<HTMLElement>("[data-fps-value]");
 const minimapPanel = requireHudElement<HTMLElement>("[data-minimap-panel]");
 const minimapCanvas = requireHudElement<HTMLCanvasElement>("[data-minimap]");
 const arenaMinimap = new ArenaMinimap(minimapCanvas, ARENA_RADIUS);
-const fpsMeter = new FpsMeter((fps) => {
+const fpsMeter = new FpsMeter((fps, meta) => {
   fpsValueText.textContent = String(fps);
+  fpsPanel.title =
+    meta.redrawFps < 24
+      ? `Panel refresh ~${meta.screenHz} Hz · Game redraw ~${meta.redrawFps} FPS`
+      : `Game redraw ~${meta.redrawFps} FPS`;
 });
 
 const clock = new THREE.Clock();
@@ -379,42 +383,30 @@ const sharedGeometries = {
   slashRing: new THREE.RingGeometry(0.42, 1, 12, 1, -0.55, 1.1),
 };
 
-function createSurfaceMaterial(
-  color: THREE.ColorRepresentation,
-  roughness = 0.65,
-  metalness = 0.08,
-): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
-    color,
-    roughness,
-    metalness,
-    envMapIntensity: 0.72,
-  });
+function createSurfaceMaterial(color: THREE.ColorRepresentation): THREE.MeshLambertMaterial {
+  return new THREE.MeshLambertMaterial({ color });
 }
 
-const stoneMaterial = createSurfaceMaterial(0x7a8088, 0.82, 0.06);
-const treeTrunkMaterial = createSurfaceMaterial(0x4a3528, 0.88, 0.02);
-const treeFoliageMaterial = new THREE.MeshStandardMaterial({
+const stoneMaterial = createSurfaceMaterial(0x7a8088);
+const treeTrunkMaterial = createSurfaceMaterial(0x4a3528);
+const treeFoliageMaterial = new THREE.MeshLambertMaterial({
   color: 0x356840,
-  roughness: 0.78,
-  metalness: 0.02,
   emissive: new THREE.Color(0x142818),
-  emissiveIntensity: 0.05,
-  envMapIntensity: 0.5,
+  emissiveIntensity: 0.08,
 });
 const playerPalette: HumanoidPalette = {
-  skin: createSurfaceMaterial(0xe8b896, 0.58, 0.02),
-  shirt: createSurfaceMaterial(0x4a5e6a, 0.72, 0.18),
-  pants: createSurfaceMaterial(0x2c343c, 0.88, 0.05),
-  boots: createSurfaceMaterial(0x1c1612, 0.9, 0.12),
+  skin: createSurfaceMaterial(0xe8b896),
+  shirt: createSurfaceMaterial(0x4a5e6a),
+  pants: createSurfaceMaterial(0x2c343c),
+  boots: createSurfaceMaterial(0x1c1612),
 };
 const enemyPalette: HumanoidPalette = {
-  skin: createSurfaceMaterial(0xd4a480, 0.58, 0.02),
-  shirt: createSurfaceMaterial(0x5c3238, 0.78, 0.12),
-  pants: createSurfaceMaterial(0x2a2224, 0.9, 0.04),
-  boots: createSurfaceMaterial(0x141010, 0.92, 0.1),
+  skin: createSurfaceMaterial(0xd4a480),
+  shirt: createSurfaceMaterial(0x5c3238),
+  pants: createSurfaceMaterial(0x2a2224),
+  boots: createSurfaceMaterial(0x141010),
 };
-const gripMaterial = createSurfaceMaterial(0x221c18, 0.82, 0.08);
+const gripMaterial = createSurfaceMaterial(0x221c18);
 const stormMaterial = new THREE.MeshBasicMaterial({
   color: 0x7a5ad8,
   transparent: true,
@@ -425,13 +417,10 @@ const stormMaterial = new THREE.MeshBasicMaterial({
 });
 const weaponBladeMaterials = weapons.map(
   (weapon) =>
-    new THREE.MeshStandardMaterial({
+    new THREE.MeshLambertMaterial({
       color: weapon.color,
-      roughness: 0.18,
-      metalness: 0.88,
-      emissive: weapon.color,
-      emissiveIntensity: 0.08,
-      envMapIntensity: 1.05,
+      emissive: new THREE.Color(weapon.color as number),
+      emissiveIntensity: 0.12,
     }),
 );
 
@@ -1350,13 +1339,10 @@ function tick(): void {
     renderPixelRatio,
   );
   const playing = state === "playing";
-  syncEnvironmentRendering(scene, playing && quality.environmentEnabled, renderer);
-  syncShadowRendering(
-    renderer,
-    sunLight,
-    arenaTerrain.mesh,
-    playing && quality.shadowsEnabled,
-  );
+  if (tickFrame % 20 === 0) {
+    syncEnvironmentRendering(scene, false, renderer);
+    syncShadowRendering(renderer, sunLight, arenaTerrain.mesh, false);
+  }
 
   if (playing) {
     updateMovement(delta);
@@ -1608,7 +1594,6 @@ function bootGame(): void {
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
-    fpsMeter.stopDisplayTracking();
     renderer.setAnimationLoop(null);
   });
 }
@@ -1621,7 +1606,6 @@ try {
   syncEnvironmentRendering(scene, false, renderer);
   renderer.render(scene, camera);
   fpsMeter.endRenderFrame();
-  fpsMeter.startDisplayTracking();
   renderer.setAnimationLoop(tick);
   bootComplete = true;
 } catch (error) {
