@@ -8,7 +8,7 @@ let environmentTexture: THREE.Texture | null = null;
 export function configureRenderer(renderer: THREE.WebGLRenderer): void {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.12;
+  renderer.toneMappingExposure = 1.24;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.shadowMap.autoUpdate = false;
@@ -149,12 +149,13 @@ export function createBlobShadowTexture(): THREE.CanvasTexture {
 }
 
 export function addSkyDome(scene: THREE.Scene): THREE.Color {
-  const geometry = new THREE.SphereGeometry(240, 12, 6);
+  const geometry = new THREE.SphereGeometry(320, 24, 12);
   const colors = new Float32Array(geometry.attributes.position.count * 3);
-  const zenith = new THREE.Color(0x2f5f9e);
-  const horizon = new THREE.Color(0x9eb8d8);
-  const haze = new THREE.Color(0xd4e4f4);
-  const sunGlow = new THREE.Color(0xfff0d8);
+  const zenith = new THREE.Color(0x3a8fd4);
+  const horizon = new THREE.Color(0xb8e8ff);
+  const haze = new THREE.Color(0xe8f6ff);
+  const sunGlow = new THREE.Color(0xfff8e8);
+  const cloud = new THREE.Color(0xffffff);
   const mountain = new THREE.Color(0x2a3a48);
   const forestSilhouette = new THREE.Color(0x1a2e22);
   const vertex = new THREE.Vector3();
@@ -168,9 +169,16 @@ export function addSkyDome(scene: THREE.Scene): THREE.Color {
       color.lerp(haze, (0.5 - t) * 0.45);
     }
 
-    const sunSide = THREE.MathUtils.clamp((vertex.x + vertex.z) / 240 + 0.35, 0, 1);
-    if (t > 0.35) {
-      color.lerp(sunGlow, sunSide * 0.12 * t);
+    const sunSide = THREE.MathUtils.clamp((vertex.x + vertex.z) / 320 + 0.35, 0, 1);
+    if (t > 0.28) {
+      color.lerp(sunGlow, sunSide * 0.18 * t);
+    }
+
+    const cloudNoise =
+      Math.sin(vertex.x * 0.08 + vertex.z * 0.06) *
+      Math.cos(vertex.y * 0.12 + vertex.z * 0.05);
+    if (t > 0.55 && cloudNoise > 0.35) {
+      color.lerp(cloud, (cloudNoise - 0.35) * 0.22);
     }
 
     const azimuth = Math.atan2(vertex.x, vertex.z);
@@ -210,29 +218,50 @@ export function addSkyDome(scene: THREE.Scene): THREE.Color {
   return horizon;
 }
 
-export function setupLighting(scene: THREE.Scene): THREE.DirectionalLight {
-  scene.add(new THREE.AmbientLight(0x8aa4c4, 0.18));
-  scene.add(new THREE.HemisphereLight(0xc8e8ff, 0x4a5c38, 0.62));
+export type SceneLighting = {
+  sun: THREE.DirectionalLight;
+  fill: THREE.DirectionalLight;
+  rim: THREE.DirectionalLight;
+  hemisphere: THREE.HemisphereLight;
+  ambient: THREE.AmbientLight;
+};
 
-  const sun = new THREE.DirectionalLight(0xfff4e8, 1.42);
-  sun.position.set(52, 68, 28);
+export function setupLighting(scene: THREE.Scene): SceneLighting {
+  const ambient = new THREE.AmbientLight(0xa8c8e8, 0.28);
+  const hemisphere = new THREE.HemisphereLight(0xd8f0ff, 0x5a8a48, 0.78);
+  scene.add(ambient);
+  scene.add(hemisphere);
+
+  const sun = new THREE.DirectionalLight(0xfff0d0, 1.95);
+  sun.position.set(58, 78, 32);
   sun.target.position.set(0, 0, 0);
   scene.add(sun.target);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(512, 512);
+  sun.shadow.mapSize.set(1024, 1024);
   sun.shadow.bias = -0.00015;
   sun.shadow.normalBias = 0.02;
   sun.shadow.camera.near = 4;
-  sun.shadow.camera.far = 140;
-  sun.shadow.camera.left = -72;
-  sun.shadow.camera.right = 72;
-  sun.shadow.camera.top = 72;
-  sun.shadow.camera.bottom = -72;
+  sun.shadow.camera.far = 220;
+  sun.shadow.camera.left = -108;
+  sun.shadow.camera.right = 108;
+  sun.shadow.camera.top = 108;
+  sun.shadow.camera.bottom = -108;
   scene.add(sun);
 
-  const fill = new THREE.DirectionalLight(0x9ec8ff, 0.32);
-  fill.position.set(-36, 28, -42);
+  const fill = new THREE.DirectionalLight(0xb8dcff, 0.48);
+  fill.position.set(-42, 34, -48);
   scene.add(fill);
 
-  return sun;
+  const rim = new THREE.DirectionalLight(0x9ee8ff, 0.62);
+  rim.position.set(-28, 42, 58);
+  scene.add(rim);
+
+  return { sun, fill, rim, hemisphere, ambient };
+}
+
+export function syncSunShadowQuality(sun: THREE.DirectionalLight, size: number): void {
+  if (sun.shadow.mapSize.x !== size) {
+    sun.shadow.mapSize.set(size, size);
+    sun.shadow.needsUpdate = true;
+  }
 }

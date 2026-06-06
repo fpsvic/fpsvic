@@ -57,7 +57,42 @@ export const WEAPONS: Weapon[] = [
     bladeLength: 2.0,
     handleLength: 0.9,
   },
+  {
+    name: "Frostbrand",
+    damage: 68,
+    range: 3.1,
+    arc: Math.PI * 0.5,
+    cooldown: 0.58,
+    knockback: 4.8,
+    color: 0x7ec8ff,
+    bladeLength: 1.65,
+    handleLength: 0.52,
+  },
+  {
+    name: "Storm Halberd",
+    damage: 76,
+    range: 3.6,
+    arc: Math.PI * 0.38,
+    cooldown: 0.78,
+    knockback: 6.2,
+    color: 0xe8d878,
+    bladeLength: 1.95,
+    handleLength: 1.05,
+  },
+  {
+    name: "Titan Cleaver",
+    damage: 92,
+    range: 2.75,
+    arc: Math.PI * 0.44,
+    cooldown: 0.95,
+    knockback: 7.4,
+    color: 0xc8a878,
+    bladeLength: 1.35,
+    handleLength: 0.88,
+  },
 ];
+
+export const TOWER_WEAPON_INDICES = [4, 5, 6] as const;
 
 export function getWeaponIndex(weapon: Weapon): number {
   return WEAPONS.indexOf(weapon);

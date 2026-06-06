@@ -2,9 +2,11 @@ import * as THREE from "three";
 import { createTerrainSplatMaterial } from "./terrainMaterial";
 import { getTerrainTextures } from "./terrainTextures";
 
-export const ARENA_RADIUS = 90;
-const TERRAIN_SIZE = 184;
-const TERRAIN_SEGMENTS = 112;
+export const ARENA_RADIUS = 128;
+const TERRAIN_SIZE = 268;
+const TERRAIN_SEGMENTS = 128;
+export const STORM_START_RADIUS = 112;
+export const STORM_MIN_RADIUS = 32;
 const HEIGHT_CACHE_STEP = 2;
 const heightCache = new Map<number, number>();
 

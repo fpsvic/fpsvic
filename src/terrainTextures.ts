@@ -50,9 +50,9 @@ function fillGrassColor(image: ImageData, size: number): void {
       const dry = Math.sin(u * 7.2 + v * 5.8) > 0.62 ? 1 : 0;
       const moss = Math.sin(u * 31 + v * 37) > 0.78 ? 1 : 0;
 
-      const lushG = 72 + patch * 38 + blade * 8;
-      const lushR = 34 + patch * 22 + dry * 28 + moss * 12;
-      const lushB = 22 + patch * 14 + dry * 6;
+      const lushG = 88 + patch * 42 + blade * 12;
+      const lushR = 42 + patch * 26 + dry * 22 + moss * 10;
+      const lushB = 28 + patch * 16 + dry * 5;
 
       const index = (y * size + x) * 4;
       image.data[index] = Math.min(255, lushR);

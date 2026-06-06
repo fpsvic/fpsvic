@@ -19,6 +19,7 @@ export type RenderQuality = {
   shadowsEnabled: boolean;
   environmentEnabled: boolean;
   pixelRatioCap: number;
+  shadowMapSize: number;
 };
 
 /** Use the higher of smoothed + instant so quality can recover when FPS improves. */
@@ -37,6 +38,7 @@ export function getRenderQuality(effectiveFps: number): RenderQuality {
       shadowsEnabled: true,
       environmentEnabled: true,
       pixelRatioCap: 0.58,
+      shadowMapSize: 512,
       tuning: {
         shadowFrameInterval: 8,
         minimapFrameInterval: 16,
@@ -54,6 +56,7 @@ export function getRenderQuality(effectiveFps: number): RenderQuality {
       shadowsEnabled: true,
       environmentEnabled: true,
       pixelRatioCap: 0.72,
+      shadowMapSize: 768,
       tuning: {
         shadowFrameInterval: 8,
         minimapFrameInterval: 12,
@@ -71,6 +74,7 @@ export function getRenderQuality(effectiveFps: number): RenderQuality {
       shadowsEnabled: true,
       environmentEnabled: true,
       pixelRatioCap: 0.82,
+      shadowMapSize: 1024,
       tuning: {
         shadowFrameInterval: 5,
         minimapFrameInterval: 8,
@@ -87,6 +91,7 @@ export function getRenderQuality(effectiveFps: number): RenderQuality {
     shadowsEnabled: true,
     environmentEnabled: true,
     pixelRatioCap: Math.min(window.devicePixelRatio || 1, 1),
+    shadowMapSize: 1024,
     tuning: {
       shadowFrameInterval: 3,
       minimapFrameInterval: 6,
