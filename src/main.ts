@@ -611,7 +611,7 @@ function buyNormalGuy(level: 1 | 2 | 3): void {
 
 function updateNormal(now: number, delta: number): void {
   spawnTimer += delta;
-  const interval = Math.max(0.45, 1.45 - wave * 0.04);
+  const interval = Math.max(1.1, 2.4 - wave * 0.03);
   if (spawnTimer > interval) {
     spawnTimer = 0;
     const isBoss = wave % 5 === 0 && Math.random() < 0.22;
@@ -629,7 +629,7 @@ function updateNormal(now: number, delta: number): void {
   for (const zombie of zombies) {
     zombie.x -= zombie.speed * (delta * 60);
     if (zombie.x < 80) {
-      health -= zombie.isBoss ? 15 : 5;
+      health -= zombie.isBoss ? 10 : 3;
       zombie.x += 40;
       tone(110, 0.06, 0.04);
       if (health <= 0) {
@@ -1136,7 +1136,7 @@ function canvasUp(): void {
   }
   mouse.down = false;
   if (draggingGuy) {
-    const target = guys.find((guy) => guy !== draggingGuy && dist(guy.x, guy.y, draggingGuy!.x, draggingGuy!.y) < guy.radius * 2);
+    const target = guys.find((guy) => guy !== draggingGuy && dist(guy.x, guy.y, draggingGuy!.x, draggingGuy!.y) < guy.radius + draggingGuy!.radius + 80);
     if (target) {
       updateGuyLevel(target, target.level + Math.max(1, Math.floor(draggingGuy.level)));
       guys.splice(guys.indexOf(draggingGuy), 1);
@@ -1149,7 +1149,15 @@ function canvasUp(): void {
     const maxX = Math.max(dragRect.x, dragRect.x + dragRect.w);
     const minY = Math.min(dragRect.y, dragRect.y + dragRect.h);
     const maxY = Math.max(dragRect.y, dragRect.y + dragRect.h);
-    mergeGuys(guys.filter((guy) => guy.x >= minX && guy.x <= maxX && guy.y >= minY && guy.y <= maxY));
+    mergeGuys(
+      guys.filter(
+        (guy) =>
+          guy.x + guy.radius >= minX &&
+          guy.x - guy.radius <= maxX &&
+          guy.y + guy.radius >= minY &&
+          guy.y - guy.radius <= maxY,
+      ),
+    );
     dragRect = null;
   }
 }
