@@ -32,7 +32,9 @@ import { createBackdropScenery } from "./scenery";
 import {
   createLootTowers,
   findNearestTower,
+  findTowerPlayerIsInside,
   getTowerLootWorldPosition,
+  resolveTowerWallCollision,
   type LootTower,
 } from "./lootTowers";
 import {
@@ -113,6 +115,8 @@ type Pickup = {
   group: THREE.Group;
   weapon: Weapon;
   bobOffset: number;
+  baseY: number;
+  towerLoot: boolean;
 };
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
@@ -591,6 +595,7 @@ applyTerrainTextureAnisotropy(renderer);
 world.add(arenaTerrain.mesh);
 const lootTowers: LootTower[] = createLootTowers(world);
 const towerLootPosition = new THREE.Vector3();
+const towerCollisionScratch = new THREE.Vector2();
 const backdropScenery = createBackdropScenery();
 backdropScenery.visible = false;
 scene.add(backdropScenery);
@@ -1015,10 +1020,18 @@ function createEnemy(x: number, z: number, scale = 1): Enemy {
   };
 }
 
-function createPickup(weapon: Weapon, x: number, z: number): Pickup {
+function createPickup(
+  weapon: Weapon,
+  x: number,
+  z: number,
+  options?: { towerLoot?: boolean; worldY?: number },
+): Pickup {
   const group = new THREE.Group();
   const groundY = sampleTerrainHeight(x, z);
-  group.position.set(x, groundY + 0.55, z);
+  const towerLoot = options?.towerLoot ?? false;
+  const baseY = options?.worldY ?? groundY + 0.55;
+  group.position.set(x, baseY, z);
+  group.userData.towerLoot = towerLoot;
   const weaponIndex = getWeaponIndex(weapon);
 
   const platform = new THREE.Mesh(
@@ -1041,6 +1054,8 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
     group,
     weapon,
     bobOffset: Math.random() * Math.PI * 2,
+    baseY,
+    towerLoot,
   };
   pickupsGroup.add(group);
   pickups.push(pickup);
@@ -1163,7 +1178,10 @@ function spawnTowerLoot(): void {
   for (const tower of lootTowers) {
     tower.looted = false;
     getTowerLootWorldPosition(tower, towerLootPosition);
-    createPickup(tower.weapon, towerLootPosition.x, towerLootPosition.z);
+    createPickup(tower.weapon, towerLootPosition.x, towerLootPosition.z, {
+      towerLoot: true,
+      worldY: towerLootPosition.y,
+    });
   }
 }
 
@@ -1428,6 +1446,15 @@ function updateMovement(delta: number): void {
     }
   }
 
+  resolveTowerWallCollision(
+    lootTowers,
+    player.position.x,
+    player.position.z,
+    towerCollisionScratch,
+  );
+  player.position.x = towerCollisionScratch.x;
+  player.position.z = towerCollisionScratch.y;
+
   player.rotation.y = Math.atan2(playerDirection.x, playerDirection.z);
   applyPlayerJumpPhysics(delta);
   playerBlobShadow.position.set(
@@ -1558,17 +1585,43 @@ function updatePickups(delta: number): void {
   let nearestDistance = Number.POSITIVE_INFINITY;
   nearestPickup = null;
 
+  const insideTower = findTowerPlayerIsInside(
+    lootTowers,
+    player.position.x,
+    player.position.z,
+  );
+
   for (const pickup of pickups) {
     const distance = pickup.group.position.distanceTo(player.position);
     if (distance < 55) {
       pickup.group.rotation.y += delta * 1.1;
-      const groundY = sampleTerrainHeight(pickup.group.position.x, pickup.group.position.z);
-      pickup.group.position.y =
-        groundY + 0.55 + Math.sin(clock.elapsedTime * 2.1 + pickup.bobOffset) * 0.1;
+      if (pickup.towerLoot) {
+        pickup.group.position.y =
+          pickup.baseY + Math.sin(clock.elapsedTime * 2.1 + pickup.bobOffset) * 0.06;
+      } else {
+        const groundY = sampleTerrainHeight(pickup.group.position.x, pickup.group.position.z);
+        pickup.group.position.y =
+          groundY + 0.55 + Math.sin(clock.elapsedTime * 2.1 + pickup.bobOffset) * 0.1;
+        pickup.baseY = pickup.group.position.y;
+      }
     }
-    if (distance < 2.4 && distance < nearestDistance) {
+    const pickupRange = pickup.towerLoot ? 3.6 : 2.4;
+    if (distance < pickupRange && distance < nearestDistance) {
       nearestDistance = distance;
       nearestPickup = pickup;
+    }
+  }
+
+  if (
+    insideTower &&
+    !insideTower.looted &&
+    (!nearestPickup || nearestPickup.weapon !== insideTower.weapon)
+  ) {
+    for (const pickup of pickups) {
+      if (pickup.weapon === insideTower.weapon) {
+        nearestPickup = pickup;
+        break;
+      }
     }
   }
 
@@ -1576,15 +1629,18 @@ function updatePickups(delta: number): void {
     lootTowers,
     player.position.x,
     player.position.z,
-    18,
+    14,
   );
 
   if (nearestPickup) {
-    const towerHint = nearbyTower && !nearbyTower.looted ? " · tower loot" : "";
+    const towerHint = nearestPickup.towerLoot ? " · tower chest" : "";
     message.textContent = `Press E to pick up ${nearestPickup.weapon.name}${towerHint}`;
     message.classList.remove("hidden");
+  } else if (insideTower && !insideTower.looted) {
+    message.textContent = `Open the chest for ${insideTower.weapon.name} — Press E`;
+    message.classList.remove("hidden");
   } else if (nearbyTower) {
-    message.textContent = `Loot tower ahead — climb for ${nearbyTower.weapon.name}`;
+    message.textContent = `Walk through the doorway to loot ${nearbyTower.weapon.name}`;
     message.classList.remove("hidden");
   } else if (state === "playing") {
     if (isAttackKeyHeld && attackChargeTime >= ATTACK_CHARGE_TIME) {
