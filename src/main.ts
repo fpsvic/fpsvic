@@ -679,6 +679,9 @@ function updateFantasy(now: number, delta: number): void {
   if (!player) {
     return;
   }
+  if (now < fantasyGraceUntil) {
+    player.hp = player.maxHp;
+  }
   if (!inShelter) {
     let nx = player.x;
     let ny = player.y;
@@ -884,7 +887,7 @@ function launchFantasy(): void {
   show(leaveFantasyBtn);
   player = makeGuy(shelter.x, shelter.y - shelter.radius - 100, equippedFantasyLevel, false, "player");
   fantasyEntities.push(player);
-  fantasyGraceUntil = performance.now() + 12000;
+  fantasyGraceUntil = performance.now() + 30000;
   addFloatText("Spawn protection", player.x, player.y - 45, "#86efac", true);
   dragon = makeGuy(dungeon.x + dungeon.w / 2, dungeon.y + dungeon.h / 2, 30, true, "dragon");
   dragon.hp = 15000;
@@ -929,6 +932,12 @@ function resetToMenu(): void {
 
 function triggerGameOver(won: boolean): void {
   if (!isPlaying) {
+    return;
+  }
+  if (mode === "fantasy" && !won && performance.now() < fantasyGraceUntil) {
+    if (player) {
+      player.hp = player.maxHp;
+    }
     return;
   }
   isPlaying = false;
