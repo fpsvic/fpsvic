@@ -33,6 +33,15 @@ import {
   type PerformanceTuning,
   type RenderQuality,
 } from "./performance";
+import {
+  applyConiferTextureAnisotropy,
+  getConiferFoliageGeometry,
+  getConiferFoliageMaterial,
+  getConiferTrunkGeometry,
+  getConiferTrunkMaterial,
+  placeConiferInstances,
+  type ConiferPlacement,
+} from "./coniferTrees";
 import { createBackdropScenery } from "./scenery";
 import {
   createLootTowers,
@@ -558,8 +567,6 @@ const sharedGeometries = {
   weaponBlade: new THREE.BoxGeometry(1, 0.1, 0.16),
   weaponTip: new THREE.ConeGeometry(0.14, 0.28, 4),
   rock: new THREE.DodecahedronGeometry(1, 0),
-  treeFoliage: new THREE.ConeGeometry(1.05, 2.4, 5),
-  treeTrunk: new THREE.CylinderGeometry(0.16, 0.22, 1.1, 4),
   pickupPlatform: new THREE.CylinderGeometry(0.78, 0.92, 0.18, 8),
   slashRing: new THREE.RingGeometry(0.42, 1, 12, 1, -0.55, 1.1),
 };
@@ -578,15 +585,6 @@ function createSurfaceMaterial(
 }
 
 const stoneMaterial = createSurfaceMaterial(0x7a8088, 0.82, 0.06);
-const treeTrunkMaterial = createSurfaceMaterial(0x4a3528, 0.88, 0.02);
-const treeFoliageMaterial = new THREE.MeshStandardMaterial({
-  color: 0x356840,
-  roughness: 0.78,
-  metalness: 0.02,
-  emissive: new THREE.Color(0x142818),
-  emissiveIntensity: 0.05,
-  envMapIntensity: 0.5,
-});
 const playerPalette: HumanoidPalette = createHumanoidPalette({
   skinColor: 0xe8b896,
   shirtColor: 0x3d5568,
@@ -624,6 +622,7 @@ const weaponBladeMaterials = WEAPONS.map(
 
 const arenaTerrain = createArenaTerrain();
 applyTerrainTextureAnisotropy(renderer);
+applyConiferTextureAnisotropy(renderer);
 world.add(arenaTerrain.mesh);
 const lootTowers: LootTower[] = createLootTowers(world);
 const towerLootPosition = new THREE.Vector3();
@@ -1119,40 +1118,32 @@ function addProps(): void {
 
   const treeCount = 10;
   const trunks = new THREE.InstancedMesh(
-    sharedGeometries.treeTrunk,
-    treeTrunkMaterial,
+    getConiferTrunkGeometry(),
+    getConiferTrunkMaterial(),
     treeCount,
   );
   const foliage = new THREE.InstancedMesh(
-    sharedGeometries.treeFoliage,
-    treeFoliageMaterial,
+    getConiferFoliageGeometry(),
+    getConiferFoliageMaterial(),
     treeCount,
   );
   trunks.castShadow = true;
   foliage.castShadow = false;
 
+  const treePlacements: ConiferPlacement[] = [];
   for (let index = 0; index < treeCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
     const radius = 34 + Math.random() * (ARENA_RADIUS * 0.58);
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
-    const scale = 0.8 + Math.random() * 0.35;
+    const scale = 0.72 + Math.random() * 0.38;
     const groundY = sampleTerrainHeight(x, z);
     const yaw = Math.random() * Math.PI * 2;
 
-    dummy.position.set(x, groundY + 0.55 * scale, z);
-    dummy.rotation.set(0, yaw, 0);
-    dummy.scale.set(scale, scale, scale);
-    dummy.updateMatrix();
-    trunks.setMatrixAt(index, dummy.matrix);
-    registerTreeShelter(x, z, 2.35 + scale * 0.8);
-
-    dummy.position.set(x, groundY + 1.35 * scale, z);
-    dummy.updateMatrix();
-    foliage.setMatrixAt(index, dummy.matrix);
+    treePlacements.push({ x, z, scale, yaw, groundY });
+    registerTreeShelter(x, z, 2.6 + scale * 1.05);
   }
-  trunks.instanceMatrix.needsUpdate = true;
-  foliage.instanceMatrix.needsUpdate = true;
+  placeConiferInstances(trunks, foliage, treePlacements);
   props.add(trunks, foliage);
 }
 

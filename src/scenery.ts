@@ -1,5 +1,14 @@
 import * as THREE from "three";
-import { ARENA_RADIUS, sampleTerrainHeight } from "./terrain";
+import {
+  getConiferFoliageGeometry,
+  getConiferFoliageMaterial,
+  getConiferTrunkGeometry,
+  getConiferTrunkMaterial,
+  placeConiferInstances,
+  sampleArenaTreeGroundY,
+  type ConiferPlacement,
+} from "./coniferTrees";
+import { ARENA_RADIUS } from "./terrain";
 
 const mountainGeometry = new THREE.ConeGeometry(1, 1, 5);
 const mountainMaterial = new THREE.MeshStandardMaterial({
@@ -8,23 +17,6 @@ const mountainMaterial = new THREE.MeshStandardMaterial({
   metalness: 0.02,
   envMapIntensity: 0.38,
   fog: true,
-});
-
-const trunkGeometry = new THREE.CylinderGeometry(0.14, 0.2, 1.15, 4);
-const foliageGeometry = new THREE.ConeGeometry(0.95, 2.35, 5);
-const trunkMaterial = new THREE.MeshStandardMaterial({
-  color: 0x4a3528,
-  roughness: 0.88,
-  metalness: 0.02,
-  envMapIntensity: 0.45,
-});
-const foliageMaterial = new THREE.MeshStandardMaterial({
-  color: 0x3d9a52,
-  roughness: 0.72,
-  metalness: 0.02,
-  emissive: new THREE.Color(0x1a4028),
-  emissiveIntensity: 0.12,
-  envMapIntensity: 0.72,
 });
 
 const dummy = new THREE.Object3D();
@@ -52,23 +44,11 @@ function placeMountainInstances(mountains: THREE.InstancedMesh, count: number): 
   mountains.instanceMatrix.needsUpdate = true;
 }
 
-function treeGroundY(x: number, z: number): number {
-  const dist = Math.hypot(x, z);
-  if (dist <= ARENA_RADIUS + 1) {
-    return sampleTerrainHeight(x, z);
-  }
-  return -0.15 + hash01(x * 0.17 + z * 0.23) * 0.35;
-}
-
-function placeForestInstances(
-  trunks: THREE.InstancedMesh,
-  foliage: THREE.InstancedMesh,
-  count: number,
-): void {
-  let placed = 0;
+function sampleForestPlacements(count: number): ConiferPlacement[] {
+  const placements: ConiferPlacement[] = [];
   let attempts = 0;
 
-  while (placed < count && attempts < count * 12) {
+  while (placements.length < count && attempts < count * 12) {
     attempts += 1;
     const angle = hash01(attempts * 1.13) * Math.PI * 2;
     const radius =
@@ -86,27 +66,14 @@ function placeForestInstances(
       continue;
     }
 
-    const scale = 0.72 + hash01(attempts * 5.5) * 0.55;
-    const groundY = treeGroundY(x, z);
+    const scale = 0.68 + hash01(attempts * 5.5) * 0.58;
+    const groundY = sampleArenaTreeGroundY(x, z);
     const yaw = hash01(attempts * 6.1) * Math.PI * 2;
 
-    dummy.position.set(x, groundY + 0.58 * scale, z);
-    dummy.rotation.set(0, yaw, 0);
-    dummy.scale.set(scale, scale, scale);
-    dummy.updateMatrix();
-    trunks.setMatrixAt(placed, dummy.matrix);
-
-    dummy.position.set(x, groundY + 1.45 * scale, z);
-    dummy.updateMatrix();
-    foliage.setMatrixAt(placed, dummy.matrix);
-
-    placed += 1;
+    placements.push({ x, z, scale, yaw, groundY });
   }
 
-  trunks.count = placed;
-  foliage.count = placed;
-  trunks.instanceMatrix.needsUpdate = true;
-  foliage.instanceMatrix.needsUpdate = true;
+  return placements;
 }
 
 /** Static mountains + instanced forests (cheap draw calls). */
@@ -122,11 +89,19 @@ export function createBackdropScenery(): THREE.Group {
   scenery.add(mountains);
 
   const forestCount = 42;
-  const trunks = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, forestCount);
-  const foliage = new THREE.InstancedMesh(foliageGeometry, foliageMaterial, forestCount);
+  const trunks = new THREE.InstancedMesh(
+    getConiferTrunkGeometry(),
+    getConiferTrunkMaterial(),
+    forestCount,
+  );
+  const foliage = new THREE.InstancedMesh(
+    getConiferFoliageGeometry(),
+    getConiferFoliageMaterial(),
+    forestCount,
+  );
   trunks.castShadow = false;
   foliage.castShadow = false;
-  placeForestInstances(trunks, foliage, forestCount);
+  placeConiferInstances(trunks, foliage, sampleForestPlacements(forestCount));
   scenery.add(trunks, foliage);
 
   return scenery;
