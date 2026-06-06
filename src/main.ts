@@ -3,11 +3,11 @@ import {
   animateHumanoid,
   applyAttackPose,
   createHumanoid,
-  setHumanoidFlash,
   type HumanoidPalette,
   type HumanoidRig,
 } from "./humanoid";
 import { createHumanoidPalette } from "./humanoidMaterials";
+import { createSoldierHumanoid, setSoldierFlash } from "./soldierHumanoid";
 import {
   addSkyDome,
   configureRenderer,
@@ -585,13 +585,6 @@ function createSurfaceMaterial(
 }
 
 const stoneMaterial = createSurfaceMaterial(0x7a8088, 0.82, 0.06);
-const playerPalette: HumanoidPalette = createHumanoidPalette({
-  skinColor: 0xe8b896,
-  shirtColor: 0x3d5568,
-  pantsColor: 0x252c34,
-  bootsColor: 0x1a1410,
-  hairColor: 0x3a2c22,
-});
 const enemyPalette: HumanoidPalette = createHumanoidPalette({
   skinColor: 0xd4a480,
   shirtColor: 0x6a3038,
@@ -666,7 +659,7 @@ scene.add(stormRing);
 const player = new THREE.Group();
 scene.add(player);
 
-const playerHumanoid = createHumanoid(playerPalette, 1, true);
+const { rig: playerHumanoid, palette: playerPalette } = createSoldierHumanoid(1, true);
 player.add(playerHumanoid.root);
 
 const playerWeapon = new THREE.Group();
@@ -1740,7 +1733,7 @@ function updateWeapon(delta: number): void {
 
   const flashing =
     invulnerable > 0 && tickFrame % 2 === 0 && Math.sin(clock.elapsedTime * 34) > 0;
-  setHumanoidFlash(playerHumanoid, playerPalette, flashing);
+  setSoldierFlash(playerPalette, flashing);
 }
 
 function updateMinimap(): void {

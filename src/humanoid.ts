@@ -6,6 +6,8 @@ export type HumanoidPalette = {
   pants: THREE.Material;
   boots: THREE.Material;
   hair?: THREE.Material;
+  beret?: THREE.Material;
+  gloves?: THREE.Material;
 };
 
 export type HumanoidRig = {
@@ -136,14 +138,14 @@ function buildArm(
   addMesh(
     lowerGroup,
     limbGeometries.lowerArm,
-    palette.skin,
+    palette.gloves ? palette.shirt : palette.skin,
     new THREE.Vector3(0, -0.12, 0),
     castShadow,
   );
   addMesh(
     lowerGroup,
     limbGeometries.hand,
-    palette.skin,
+    palette.gloves ?? palette.skin,
     new THREE.Vector3(0, -0.28, 0.01),
     castShadow,
   );
@@ -220,7 +222,9 @@ function buildHead(
     castShadow,
   );
 
-  if (palette.hair) {
+  if (palette.beret) {
+    // Beret and emblem are attached by soldierHumanoid gear builder.
+  } else if (palette.hair) {
     const hair = addMesh(
       head,
       limbGeometries.hair,
