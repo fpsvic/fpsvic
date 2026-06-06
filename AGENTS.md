@@ -23,7 +23,20 @@ Single browser app: **Blade Drop Arena** (`fpsvic`) — Vite + TypeScript + Thre
 ### Development workflow
 
 1. `npm install` (also runs on VM startup via the update script).
-2. `npm run dev` — open **http://localhost:5173/** in Desktop preview (or port-forwarded URL), click **Start match**, then use WASD / mouse / click.
+2. `npm run dev` — open **http://localhost:5173/** in Desktop preview (or port-forwarded URL), click **Enter the Arena**, then use WASD / mouse / click.
+
+### Desktop tab shows mountains / wallpaper (not the game)
+
+The **Desktop** pane is a **full Linux desktop stream** (wallpaper, taskbar, icons). The mountain scene is the **VM background**, not Blade Arena.
+
+The game does **not** replace that wallpaper. You must open the game **inside Chrome** on that desktop:
+
+1. Confirm **`npm run dev`** is running (terminal “Blade Arena dev”, port **5173**).
+2. On the Desktop taskbar, open **Google Chrome** (not a random new-tab page).
+3. Go to **http://127.0.0.1:5173/** or **http://localhost:5173/**.
+4. Or run terminal **“Open game in Desktop Chrome”** (`bash .cursor/open-desktop-game.sh`) — launches Chrome to the game URL.
+
+**Easier (no Desktop):** agent panel **plug icon** → forward port **5173** → open **`http://localhost:5173`** in Cursor’s browser tab (not Desktop).
 
 ### Gotchas
 
