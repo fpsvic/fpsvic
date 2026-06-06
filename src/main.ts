@@ -1,865 +1,1252 @@
-import * as THREE from "three";
 import "./styles.css";
 
-type GameState = "start" | "playing" | "ended";
+type Mode = "" | "normal" | "fantasy";
 
-type Weapon = {
-  name: string;
-  damage: number;
-  range: number;
-  arc: number;
-  cooldown: number;
-  knockback: number;
-  color: THREE.ColorRepresentation;
-  bladeLength: number;
-  handleLength: number;
-};
-
-type Enemy = {
-  group: THREE.Group;
-  health: number;
-  maxHealth: number;
-  speed: number;
+type Guy = {
+  id: string;
+  x: number;
+  y: number;
+  tx: number;
+  ty: number;
+  level: number;
+  hp: number;
+  maxHp: number;
   radius: number;
-  cooldown: number;
-  stun: number;
+  speed: number;
+  lastShot: number;
+  isBot: boolean;
+  name: string;
 };
 
-type Pickup = {
-  group: THREE.Group;
-  weapon: Weapon;
-  bobOffset: number;
+type Zombie = {
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  radius: number;
+  speed: number;
+  isBoss: boolean;
 };
 
-const app = document.querySelector<HTMLDivElement>("#app");
+type Bullet = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  damage: number;
+  ownerId: string;
+  isBot: boolean;
+  life: number;
+};
 
-if (!app) {
-  throw new Error("Unable to find app container.");
-}
+type Food = {
+  x: number;
+  y: number;
+};
 
-const weapons: Weapon[] = [
-  {
-    name: "Storm Knife",
-    damage: 26,
-    range: 2.0,
-    arc: Math.PI * 0.56,
-    cooldown: 0.34,
-    knockback: 2.6,
-    color: 0x87f7ff,
-    bladeLength: 0.9,
-    handleLength: 0.42,
-  },
-  {
-    name: "Knight Sword",
-    damage: 42,
-    range: 2.8,
-    arc: Math.PI * 0.48,
-    cooldown: 0.62,
-    knockback: 3.8,
-    color: 0xb8ff6c,
-    bladeLength: 1.55,
-    handleLength: 0.55,
-  },
-  {
-    name: "Raider Axe",
-    damage: 58,
-    range: 2.45,
-    arc: Math.PI * 0.42,
-    cooldown: 0.9,
-    knockback: 5.2,
-    color: 0xffa64d,
-    bladeLength: 1.15,
-    handleLength: 0.95,
-  },
-  {
-    name: "Crystal Spear",
-    damage: 34,
-    range: 3.8,
-    arc: Math.PI * 0.28,
-    cooldown: 0.7,
-    knockback: 4.4,
-    color: 0xd49cff,
-    bladeLength: 2.0,
-    handleLength: 0.9,
-  },
-];
+type FloatText = {
+  text: string;
+  x: number;
+  y: number;
+  color: string;
+  life: number;
+  world: boolean;
+};
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x071321);
-scene.fog = new THREE.FogExp2(0x071321, 0.021);
+type LeaderboardScore = {
+  name: string;
+  wave: number;
+  date: number;
+};
 
-const camera = new THREE.PerspectiveCamera(
-  60,
-  window.innerWidth / window.innerHeight,
-  0.1,
-  500,
-);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-app.appendChild(renderer.domElement);
-
-const hud = document.createElement("div");
-hud.className = "hud";
-hud.innerHTML = `
-  <div class="top-bar">
-    <div class="stat"><span>Health</span><strong data-health>100</strong></div>
-    <div class="stat"><span>Alive</span><strong data-alive>12</strong></div>
-    <div class="stat"><span>Elims</span><strong data-score>0</strong></div>
-    <div class="stat"><span>Storm</span><strong data-storm>90m</strong></div>
-  </div>
-
-  <div class="weapon-card">
-    <div class="weapon-name" data-weapon-name>Storm Knife</div>
-    <div class="weapon-info" data-weapon-info>Fast starter blade.</div>
-    <div class="cooldown-wrap"><div class="cooldown-bar" data-cooldown></div></div>
-    <div class="health-wrap"><div class="health-bar" data-health-bar></div></div>
-  </div>
-
-  <div class="bottom-bar">
-    <div class="controls">
-      <div><kbd>WASD</kbd> move</div>
-      <div><kbd>Mouse</kbd> aim</div>
-      <div><kbd>Click</kbd> slash</div>
-      <div><kbd>Space</kbd> dash</div>
-      <div><kbd>E</kbd> pick up</div>
-      <div><kbd>R</kbd> restart</div>
-    </div>
-  </div>
-
-  <div class="center-message hidden" data-message></div>
-
-  <div class="start-panel" data-start-panel>
-    <h1>Blade Drop Arena</h1>
-    <p>Drop into a stylized 3D battle arena where every fight is close range. Outlast the bots, loot stronger knives, swords, axes, and spears, and stay inside the shrinking storm ring.</p>
-    <button data-start-button>Start match</button>
-  </div>
-
-  <div class="end-panel hidden" data-end-panel>
-    <h2 data-end-title>Match over</h2>
-    <p data-end-copy></p>
-    <button data-restart-button>Play again</button>
-  </div>
-`;
-app.appendChild(hud);
-
-function requireHudElement<T extends HTMLElement>(selector: string): T {
-  const element = hud.querySelector<T>(selector);
+const $ = <T extends HTMLElement>(id: string): T => {
+  const element = document.getElementById(id);
   if (!element) {
-    throw new Error(`Unable to initialize game HUD: missing ${selector}.`);
+    throw new Error(`Missing #${id}`);
   }
-  return element;
+  return element as T;
+};
+
+const startScreen = $("startScreen");
+const playBtn = $("playBtn") as HTMLButtonElement;
+const usernameInput = $("usernameInput") as HTMLInputElement;
+const nameError = $("nameError");
+const leaderboardBtn = $("leaderboardBtn") as HTMLButtonElement;
+const leaderboardScreen = $("leaderboardScreen");
+const closeLeaderboardBtn = $("closeLeaderboardBtn") as HTMLButtonElement;
+const leaderboardBody = $("leaderboardBody") as HTMLTableSectionElement;
+const emptyLeaderboardMsg = $("emptyLeaderboardMsg");
+const rulesScreen = $("rulesScreen");
+const rulesBackBtn = $("rulesBackBtn") as HTMLButtonElement;
+const normalModeBtn = $("normalModeBtn") as HTMLButtonElement;
+const fantasyShopBtn = $("fantasyShopBtn") as HTMLButtonElement;
+const tutorialBtn = $("tutorialBtn") as HTMLButtonElement;
+const tutorialScreen = $("tutorialScreen");
+const closeTutorialBtn = $("closeTutorialBtn") as HTMLButtonElement;
+const tutorialScreenText = $("tutorialScreenText");
+const tutorialDots = $("tutorialDots");
+const tutorialCanvas = $("tutorialCanvas") as HTMLCanvasElement;
+const fantasyShopScreen = $("fantasyShopScreen");
+const closeFantasyShopBtn = $("closeFantasyShopBtn") as HTMLButtonElement;
+const fantasyShopGrid = $("fantasyShopGrid");
+const fantasyShopMoney = $("fantasyShopMoney");
+const startFightBtn = $("startFightBtn") as HTMLButtonElement;
+const matchmakingScreen = $("matchmakingScreen");
+const cancelMatchBtn = $("cancelMatchBtn") as HTMLButtonElement;
+const countdownTimer = $("countdownTimer");
+const playerCountText = $("playerCountText");
+const gameUI = $("gameUI");
+const normalUI = $("normalUI");
+const fantasyStatsUI = $("fantasyStatsUI");
+const homeBtn = $("homeBtn") as HTMLButtonElement;
+const buyLvl1Btn = $("buyLvl1Btn") as HTMLButtonElement;
+const buyLvl2Btn = $("buyLvl2Btn") as HTMLButtonElement;
+const buyLvl3Btn = $("buyLvl3Btn") as HTMLButtonElement;
+const healthDisplay = $("healthDisplay");
+const coinDisplay = $("coinDisplay");
+const waveNumDisplay = $("waveNumDisplay");
+const aliveDisplay = $("aliveDisplay");
+const bankDisplay = $("bankDisplay");
+const fantasyMinimap = $("fantasyMinimap");
+const minimapCanvas = $("minimapCanvas") as HTMLCanvasElement;
+const leaveFantasyBtn = $("leaveFantasyBtn") as HTMLButtonElement;
+const quitConfirmScreen = $("quitConfirmScreen");
+const confirmQuitBtn = $("confirmQuitBtn") as HTMLButtonElement;
+const cancelQuitBtn = $("cancelQuitBtn") as HTMLButtonElement;
+const gameOverScreen = $("gameOverScreen");
+const gameOverTitle = $("gameOverTitle");
+const gameOverStats = $("gameOverStats");
+const restartBtn = $("restartBtn") as HTMLButtonElement;
+const enterShelterBtn = $("enterShelterBtn") as HTMLButtonElement;
+const toastMessage = $("toastMessage");
+const musicBtn = $("musicBtn") as HTMLButtonElement;
+const gameCanvas = $("gameCanvas") as HTMLCanvasElement;
+
+function getCanvasContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error(`Unable to initialize canvas context for #${canvas.id}.`);
+  }
+  return context;
 }
 
-const healthText = requireHudElement<HTMLElement>("[data-health]");
-const aliveText = requireHudElement<HTMLElement>("[data-alive]");
-const scoreText = requireHudElement<HTMLElement>("[data-score]");
-const stormText = requireHudElement<HTMLElement>("[data-storm]");
-const weaponNameText = requireHudElement<HTMLElement>("[data-weapon-name]");
-const weaponInfoText = requireHudElement<HTMLElement>("[data-weapon-info]");
-const healthBar = requireHudElement<HTMLElement>("[data-health-bar]");
-const cooldownBar = requireHudElement<HTMLElement>("[data-cooldown]");
-const message = requireHudElement<HTMLElement>("[data-message]");
-const startPanel = requireHudElement<HTMLElement>("[data-start-panel]");
-const endPanel = requireHudElement<HTMLElement>("[data-end-panel]");
-const endTitle = requireHudElement<HTMLElement>("[data-end-title]");
-const endCopy = requireHudElement<HTMLElement>("[data-end-copy]");
-const startButton = requireHudElement<HTMLButtonElement>("[data-start-button]");
-const restartButton = requireHudElement<HTMLButtonElement>("[data-restart-button]");
+const ctx = getCanvasContext(gameCanvas);
+const tutorialContext = getCanvasContext(tutorialCanvas);
+const minimapContext = getCanvasContext(minimapCanvas);
 
-const clock = new THREE.Clock();
-const world = new THREE.Group();
-const props = new THREE.Group();
-const enemiesGroup = new THREE.Group();
-const pickupsGroup = new THREE.Group();
-const slashEffects = new THREE.Group();
-scene.add(world, props, enemiesGroup, pickupsGroup, slashEffects);
+const arenaSize = 4000;
+const shelter = { x: 2000, y: 2000, radius: 300, cost: 60000 };
+const dungeon = { x: 50, y: 1000, w: 600, h: 800 };
+const buyCosts = { 1: 25, 2: 50, 3: 100 };
+const storageKeys = {
+  username: "mergeGuys_username",
+  money: "mergeGuys_fantasyMoney",
+  scores: "mergeGuys_scores",
+};
 
-const ambientLight = new THREE.HemisphereLight(0xbadfff, 0x24351f, 2.1);
-scene.add(ambientLight);
-
-const sun = new THREE.DirectionalLight(0xffffff, 3.2);
-sun.position.set(30, 42, 18);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -85;
-sun.shadow.camera.right = 85;
-sun.shadow.camera.top = 85;
-sun.shadow.camera.bottom = -85;
-scene.add(sun);
-
-const groundMaterial = new THREE.MeshStandardMaterial({
-  color: 0x1a6442,
-  roughness: 0.9,
-  metalness: 0.05,
-});
-const sandMaterial = new THREE.MeshStandardMaterial({
-  color: 0xc7aa68,
-  roughness: 0.95,
-});
-const stoneMaterial = new THREE.MeshStandardMaterial({
-  color: 0x657285,
-  roughness: 0.75,
-});
-const woodMaterial = new THREE.MeshStandardMaterial({
-  color: 0x8e5a32,
-  roughness: 0.82,
-});
-const playerMaterial = new THREE.MeshStandardMaterial({
-  color: 0x36d6ff,
-  roughness: 0.45,
-  metalness: 0.1,
-});
-const enemyMaterial = new THREE.MeshStandardMaterial({
-  color: 0xff5e7d,
-  roughness: 0.62,
-});
-const stormMaterial = new THREE.MeshBasicMaterial({
-  color: 0x784cff,
-  transparent: true,
-  opacity: 0.18,
-  side: THREE.DoubleSide,
-  depthWrite: false,
-});
-const safeZoneMaterial = new THREE.MeshBasicMaterial({
-  color: 0x72d7ff,
-  transparent: true,
-  opacity: 0.36,
-  side: THREE.DoubleSide,
-  depthWrite: false,
-});
-
-const terrain = new THREE.Mesh(new THREE.CircleGeometry(92, 96), groundMaterial);
-terrain.rotation.x = -Math.PI / 2;
-terrain.receiveShadow = true;
-world.add(terrain);
-
-const centerPad = new THREE.Mesh(new THREE.CircleGeometry(22, 64), sandMaterial);
-centerPad.position.y = 0.012;
-centerPad.rotation.x = -Math.PI / 2;
-centerPad.receiveShadow = true;
-world.add(centerPad);
-
-const stormRing = new THREE.Mesh(new THREE.RingGeometry(1, 1.8, 128), stormMaterial);
-stormRing.rotation.x = -Math.PI / 2;
-stormRing.position.y = 0.09;
-scene.add(stormRing);
-
-const safeRing = new THREE.Mesh(new THREE.RingGeometry(1, 1.08, 128), safeZoneMaterial);
-safeRing.rotation.x = -Math.PI / 2;
-safeRing.position.y = 0.12;
-scene.add(safeRing);
-
-const player = new THREE.Group();
-player.position.set(0, 0, 0);
-scene.add(player);
-
-const playerBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.48, 1.25, 8, 16), playerMaterial);
-playerBody.position.y = 1.02;
-playerBody.castShadow = true;
-player.add(playerBody);
-
-const playerHead = new THREE.Mesh(
-  new THREE.SphereGeometry(0.36, 20, 16),
-  new THREE.MeshStandardMaterial({ color: 0xf2c5a0, roughness: 0.58 }),
-);
-playerHead.position.y = 1.98;
-playerHead.castShadow = true;
-player.add(playerHead);
-
-const playerWeapon = new THREE.Group();
-playerWeapon.position.set(0.58, 1.18, -0.2);
-player.add(playerWeapon);
+let mode: Mode = "";
+let username = "";
+let isPlaying = false;
+let isPaused = false;
+let matchmakingId = 0;
+let tutorialId = 0;
+let tutorialTimer = 0;
+let tutorialStep = 0;
+let lastTime = performance.now();
+let health = 100;
+let coins = 50;
+let wave = 1;
+let spawnTimer = 0;
+let fantasyMoneyValue = Number(localStorage.getItem(storageKeys.money) ?? 0) || 0;
+let equippedFantasyLevel = 1;
+let camX = 0;
+let camY = 0;
+let player: Guy | null = null;
+let dragon: Guy | null = null;
+let draggingGuy: Guy | null = null;
+let dragRect: { x: number; y: number; w: number; h: number } | null = null;
+let inShelter = false;
+let shelterStartedAt = 0;
+let musicEnabled = true;
+let audioContext: AudioContext | null = null;
+let musicTimer = 0;
 
 const keys = new Set<string>();
-const pointer = new THREE.Vector2();
-const moveVector = new THREE.Vector3();
-const forward = new THREE.Vector3();
-const right = new THREE.Vector3();
-const tempVector = new THREE.Vector3();
-const tempVectorTwo = new THREE.Vector3();
-const cameraTarget = new THREE.Vector3();
-const playerDirection = new THREE.Vector3(0, 0, 1);
+const mouse = { x: 0, y: 0, startX: 0, startY: 0, down: false };
+const guys: Guy[] = [];
+const zombies: Zombie[] = [];
+const normalBullets: Bullet[] = [];
+const fantasyEntities: Guy[] = [];
+const fantasyBullets: Bullet[] = [];
+const fantasyFood: Food[] = [];
+const floatTexts: FloatText[] = [];
 
-let state: GameState = "start";
-let playerHealth = 100;
-let score = 0;
-let equippedWeapon = weapons[0];
-let attackCooldown = 0;
-let attackTime = 0;
-let dashCooldown = 0;
-let invulnerable = 0;
-let stormRadius = 78;
-let stormTimer = 0;
-let cameraYaw = Math.PI;
-let cameraPitch = 0.52;
-let nearestPickup: Pickup | null = null;
-
-const enemies: Enemy[] = [];
-const pickups: Pickup[] = [];
-
-function createWeaponMesh(weapon: Weapon): THREE.Group {
-  const weaponGroup = new THREE.Group();
-  const bladeMaterial = new THREE.MeshStandardMaterial({
-    color: weapon.color,
-    roughness: 0.26,
-    metalness: 0.7,
-    emissive: weapon.color,
-    emissiveIntensity: 0.12,
-  });
-  const gripMaterial = new THREE.MeshStandardMaterial({
-    color: 0x2f2431,
-    roughness: 0.75,
-  });
-  const handle = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.055, 0.075, weapon.handleLength, 10),
-    gripMaterial,
-  );
-  handle.rotation.z = Math.PI / 2;
-  handle.castShadow = true;
-  weaponGroup.add(handle);
-
-  const blade = new THREE.Mesh(
-    new THREE.BoxGeometry(weapon.bladeLength, 0.12, 0.18),
-    bladeMaterial,
-  );
-  blade.position.x = weapon.bladeLength / 2 + weapon.handleLength / 2;
-  blade.castShadow = true;
-  weaponGroup.add(blade);
-
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.32, 4), bladeMaterial);
-  tip.position.x = weapon.bladeLength + weapon.handleLength / 2 + 0.16;
-  tip.rotation.z = -Math.PI / 2;
-  tip.castShadow = true;
-  weaponGroup.add(tip);
-
-  if (weapon.name.includes("Axe")) {
-    const axeHead = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.7, 0.16), bladeMaterial);
-    axeHead.position.x = weapon.bladeLength + weapon.handleLength / 2 - 0.05;
-    axeHead.position.y = 0.22;
-    axeHead.castShadow = true;
-    weaponGroup.add(axeHead);
-  }
-
-  return weaponGroup;
+function resizeCanvas(): void {
+  gameCanvas.width = window.innerWidth;
+  gameCanvas.height = window.innerHeight;
 }
 
-function equipWeapon(weapon: Weapon): void {
-  equippedWeapon = weapon;
-  playerWeapon.clear();
-  const mesh = createWeaponMesh(weapon);
-  mesh.rotation.z = -0.15;
-  playerWeapon.add(mesh);
-  weaponNameText.textContent = weapon.name;
-  weaponInfoText.textContent = `${weapon.damage} damage | ${weapon.range.toFixed(
-    1,
-  )}m range | ${(weapon.cooldown * 1000).toFixed(0)}ms recovery`;
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
-function createEnemy(x: number, z: number, scale = 1): Enemy {
-  const group = new THREE.Group();
-  group.position.set(x, 0, z);
+function dist(x1: number, y1: number, x2: number, y2: number): number {
+  return Math.hypot(x2 - x1, y2 - y1);
+}
 
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.43 * scale, 1.05 * scale, 8, 14), enemyMaterial);
-  body.position.y = 0.94 * scale;
-  body.castShadow = true;
-  group.add(body);
+function hide(element: HTMLElement): void {
+  element.classList.add("hidden");
+}
 
-  const helmet = new THREE.Mesh(
-    new THREE.SphereGeometry(0.34 * scale, 16, 12),
-    new THREE.MeshStandardMaterial({ color: 0x371a2a, roughness: 0.5 }),
-  );
-  helmet.position.y = 1.75 * scale;
-  helmet.castShadow = true;
-  group.add(helmet);
+function show(element: HTMLElement): void {
+  element.classList.remove("hidden");
+}
 
-  const blade = createWeaponMesh(weapons[Math.floor(Math.random() * weapons.length)]);
-  blade.scale.setScalar(0.75 * scale);
-  blade.position.set(0.5 * scale, 1.05 * scale, -0.08);
-  blade.rotation.z = 0.2;
-  group.add(blade);
+function randomId(): string {
+  return Math.random().toString(36).slice(2);
+}
 
-  enemiesGroup.add(group);
-
+function makeGuy(x: number, y: number, level: number, isBot = false, id = randomId()): Guy {
+  const capped = clamp(Math.round(level), 1, 30);
   return {
-    group,
-    health: 80 + scale * 20,
-    maxHealth: 80 + scale * 20,
-    speed: 2.5 + Math.random() * 1.05,
-    radius: 0.58 * scale,
-    cooldown: Math.random() * 1.4,
-    stun: 0,
+    id,
+    x,
+    y,
+    tx: x,
+    ty: y,
+    level: capped,
+    hp: 50 + capped * 30,
+    maxHp: 50 + capped * 30,
+    radius: Math.min(18 + capped * 2, 80),
+    speed: 4 + capped * 0.15 + Math.random(),
+    lastShot: 0,
+    isBot,
+    name: isBot ? `(bot) Slayer${Math.floor(Math.random() * 99)}` : username,
   };
 }
 
-function createPickup(weapon: Weapon, x: number, z: number): Pickup {
-  const group = new THREE.Group();
-  group.position.set(x, 0.75, z);
-
-  const platform = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.78, 0.92, 0.18, 18),
-    new THREE.MeshStandardMaterial({
-      color: weapon.color,
-      roughness: 0.36,
-      metalness: 0.25,
-      emissive: weapon.color,
-      emissiveIntensity: 0.18,
-    }),
-  );
-  platform.castShadow = true;
-  group.add(platform);
-
-  const weaponMesh = createWeaponMesh(weapon);
-  weaponMesh.position.y = 0.42;
-  weaponMesh.rotation.z = 0.65;
-  weaponMesh.scale.setScalar(0.9);
-  group.add(weaponMesh);
-
-  const pickup = {
-    group,
-    weapon,
-    bobOffset: Math.random() * Math.PI * 2,
+function makeZombie(x: number, y: number, isBoss: boolean): Zombie {
+  const hp = isBoss ? 180 * wave : 20 + wave * 7;
+  return {
+    x,
+    y,
+    hp,
+    maxHp: hp,
+    radius: isBoss ? 36 : 18,
+    speed: isBoss ? 0.9 : 0.9 + wave * 0.04,
+    isBoss,
   };
-  pickupsGroup.add(group);
-  pickups.push(pickup);
-  return pickup;
 }
 
-function addProps(): void {
-  const rockGeometry = new THREE.DodecahedronGeometry(1, 0);
-  const trunkGeometry = new THREE.CylinderGeometry(0.25, 0.38, 2.2, 8);
-  const leavesGeometry = new THREE.ConeGeometry(1.2, 2.3, 8);
-  const leavesMaterial = new THREE.MeshStandardMaterial({ color: 0x2fa96b, roughness: 0.74 });
+function updateGuyLevel(guy: Guy, level: number): void {
+  guy.level = clamp(Math.round(level), 1, 30);
+  guy.radius = Math.min(18 + guy.level * 2, 80);
+  guy.maxHp = 50 + guy.level * 30;
+  guy.hp = Math.min(guy.maxHp, guy.hp + guy.level * 15);
+}
 
-  for (let index = 0; index < 38; index += 1) {
-    const angle = Math.random() * Math.PI * 2;
-    const radius = 28 + Math.random() * 54;
-    const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius;
-    const rock = new THREE.Mesh(rockGeometry, stoneMaterial);
-    rock.position.set(x, 0.45, z);
-    rock.rotation.set(Math.random(), Math.random(), Math.random());
-    const size = 0.6 + Math.random() * 1.4;
-    rock.scale.set(size, size * (0.45 + Math.random() * 0.4), size);
-    rock.castShadow = true;
-    rock.receiveShadow = true;
-    props.add(rock);
+function setMoney(value: number): void {
+  fantasyMoneyValue = Math.max(0, Math.round(value));
+  localStorage.setItem(storageKeys.money, String(fantasyMoneyValue));
+  fantasyShopMoney.textContent = fantasyMoneyValue.toLocaleString();
+  bankDisplay.textContent = fantasyMoneyValue.toLocaleString();
+}
+
+function updateUI(): void {
+  healthDisplay.textContent = String(Math.max(0, Math.ceil(health)));
+  coinDisplay.textContent = String(coins);
+  waveNumDisplay.textContent = String(wave);
+  if (mode === "fantasy") {
+    const enemiesLeft = fantasyEntities.filter((entity) => entity.id !== "player" && entity.id !== "dragon").length;
+    aliveDisplay.textContent = String(enemiesLeft + (player && player.hp > 0 ? 1 : 0));
   }
+  setMoney(fantasyMoneyValue);
+}
 
-  for (let index = 0; index < 42; index += 1) {
-    const angle = Math.random() * Math.PI * 2;
-    const radius = 24 + Math.random() * 62;
-    const tree = new THREE.Group();
-    tree.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
-    const trunk = new THREE.Mesh(trunkGeometry, woodMaterial);
-    trunk.position.y = 1.1;
-    trunk.castShadow = true;
-    tree.add(trunk);
-    const leaves = new THREE.Mesh(leavesGeometry, leavesMaterial);
-    leaves.position.y = 2.85;
-    leaves.castShadow = true;
-    tree.add(leaves);
-    props.add(tree);
-  }
+function showToast(text: string, color = "#10b981"): void {
+  toastMessage.textContent = text;
+  toastMessage.style.background = color;
+  show(toastMessage);
+  window.setTimeout(() => hide(toastMessage), 2200);
+}
 
-  for (let index = 0; index < 8; index += 1) {
-    const angle = (index / 8) * Math.PI * 2;
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(8, 2.8, 0.7), stoneMaterial);
-    wall.position.set(Math.cos(angle) * 18, 1.4, Math.sin(angle) * 18);
-    wall.rotation.y = -angle;
-    wall.castShadow = true;
-    wall.receiveShadow = true;
-    props.add(wall);
+function addFloatText(text: string, x: number, y: number, color: string, world = false): void {
+  floatTexts.push({ text, x, y, color, life: 70, world });
+  if (floatTexts.length > 40) {
+    floatTexts.shift();
   }
 }
 
-function spawnMatch(): void {
-  enemiesGroup.clear();
-  pickupsGroup.clear();
-  slashEffects.clear();
-  enemies.length = 0;
-  pickups.length = 0;
-  player.position.set(0, 0, 0);
-  playerDirection.set(0, 0, 1);
-  player.rotation.y = 0;
-  playerHealth = 100;
-  score = 0;
-  attackCooldown = 0;
-  attackTime = 0;
-  dashCooldown = 0;
-  invulnerable = 0;
-  stormRadius = 78;
-  stormTimer = 0;
-  nearestPickup = null;
-  equipWeapon(weapons[0]);
-
-  for (let index = 0; index < 12; index += 1) {
-    const angle = (index / 12) * Math.PI * 2 + Math.random() * 0.35;
-    const radius = 19 + Math.random() * 38;
-    enemies.push(createEnemy(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.9 + Math.random() * 0.28));
-  }
-
-  for (let index = 0; index < 15; index += 1) {
-    const weapon = weapons[1 + Math.floor(Math.random() * (weapons.length - 1))];
-    const angle = Math.random() * Math.PI * 2;
-    const radius = 8 + Math.random() * 58;
-    createPickup(weapon, Math.cos(angle) * radius, Math.sin(angle) * radius);
+function readScores(): LeaderboardScore[] {
+  try {
+    return JSON.parse(localStorage.getItem(storageKeys.scores) ?? "[]") as LeaderboardScore[];
+  } catch {
+    return [];
   }
 }
 
-function setState(nextState: GameState): void {
-  state = nextState;
-  startPanel.classList.toggle("hidden", nextState !== "start");
-  endPanel.classList.toggle("hidden", nextState !== "ended");
-  message.classList.toggle("hidden", nextState !== "playing");
-}
-
-function startMatch(): void {
-  spawnMatch();
-  setState("playing");
-  renderer.domElement.requestPointerLock().catch(() => {
-    message.textContent = "Click the arena to lock aim";
-  });
-}
-
-function endMatch(won: boolean): void {
-  setState("ended");
-  endTitle.textContent = won ? "Victory Royale" : "Eliminated";
-  endCopy.textContent = won
-    ? `You cleared the arena with ${score} eliminations.`
-    : `You scored ${score} eliminations before the storm or an enemy got you.`;
-  document.exitPointerLock();
-}
-
-function applyPlayerDamage(amount: number): void {
-  if (invulnerable > 0 || state !== "playing") {
+function saveScore(): void {
+  const name = username.trim();
+  if (!name || name.toLowerCase().includes("bot")) {
     return;
   }
-  playerHealth = Math.max(0, playerHealth - amount);
-  invulnerable = 0.45;
-  if (playerHealth <= 0) {
-    endMatch(false);
+  const scores = readScores().filter((score) => Date.now() - score.date < 24 * 60 * 60 * 1000);
+  scores.push({ name, wave, date: Date.now() });
+  localStorage.setItem(storageKeys.scores, JSON.stringify(scores));
+}
+
+function renderLeaderboard(): void {
+  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  const scores = readScores()
+    .filter((score) => score.date > dayAgo)
+    .sort((a, b) => b.wave - a.wave)
+    .slice(0, 10);
+  leaderboardBody.innerHTML = "";
+  emptyLeaderboardMsg.classList.toggle("hidden", scores.length > 0);
+  for (const score of scores) {
+    const row = document.createElement("tr");
+    const nameCell = document.createElement("td");
+    const waveCell = document.createElement("td");
+    nameCell.textContent = score.name;
+    waveCell.textContent = String(score.wave);
+    row.append(nameCell, waveCell);
+    leaderboardBody.append(row);
   }
 }
 
-function removeEnemy(enemy: Enemy): void {
-  const index = enemies.indexOf(enemy);
-  if (index >= 0) {
-    enemies.splice(index, 1);
+function createAudioContext(): AudioContext | null {
+  if (!audioContext) {
+    audioContext = new AudioContext();
   }
-  enemiesGroup.remove(enemy.group);
-  score += 1;
-
-  if (Math.random() > 0.48) {
-    const weapon = weapons[1 + Math.floor(Math.random() * (weapons.length - 1))];
-    createPickup(weapon, enemy.group.position.x, enemy.group.position.z);
+  if (audioContext.state === "suspended") {
+    void audioContext.resume();
   }
-
-  if (enemies.length === 0) {
-    endMatch(true);
-  }
+  return audioContext;
 }
 
-function addSlashEffect(origin: THREE.Vector3, direction: THREE.Vector3, range: number): void {
-  const material = new THREE.MeshBasicMaterial({
-    color: equippedWeapon.color,
-    transparent: true,
-    opacity: 0.72,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  });
-  const slash = new THREE.Mesh(new THREE.RingGeometry(range * 0.42, range, 32, 1, -0.55, 1.1), material);
-  slash.position.copy(origin).addScaledVector(direction, range * 0.45);
-  slash.position.y = 0.12;
-  slash.rotation.x = -Math.PI / 2;
-  slash.rotation.z = Math.atan2(direction.z, direction.x) - 0.55;
-  slash.userData.life = 0.18;
-  slashEffects.add(slash);
-}
-
-function attack(): void {
-  if (state !== "playing" || attackCooldown > 0) {
+function tone(freq: number, duration = 0.12, volume = 0.04): void {
+  if (!musicEnabled) {
     return;
   }
-
-  attackCooldown = equippedWeapon.cooldown;
-  attackTime = 0.24;
-  addSlashEffect(player.position.clone(), playerDirection.clone(), equippedWeapon.range);
-
-  for (const enemy of [...enemies]) {
-    const offset = tempVector.copy(enemy.group.position).sub(player.position);
-    offset.y = 0;
-    const distance = offset.length();
-    if (distance > equippedWeapon.range + enemy.radius) {
-      continue;
-    }
-
-    const angle = playerDirection.angleTo(offset.normalize());
-    if (angle > equippedWeapon.arc / 2) {
-      continue;
-    }
-
-    enemy.health -= equippedWeapon.damage;
-    enemy.stun = 0.2;
-    enemy.group.position.addScaledVector(playerDirection, equippedWeapon.knockback * 0.08);
-
-    if (enemy.health <= 0) {
-      removeEnemy(enemy);
-    }
-  }
-}
-
-function pickUpNearest(): void {
-  if (!nearestPickup) {
+  const audio = createAudioContext();
+  if (!audio) {
     return;
   }
-  equipWeapon(nearestPickup.weapon);
-  pickupsGroup.remove(nearestPickup.group);
-  const index = pickups.indexOf(nearestPickup);
-  if (index >= 0) {
-    pickups.splice(index, 1);
-  }
-  nearestPickup = null;
+  const osc = audio.createOscillator();
+  const gain = audio.createGain();
+  osc.type = "square";
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.0001, audio.currentTime);
+  gain.gain.linearRampToValueAtTime(volume, audio.currentTime + 0.01);
+  gain.gain.linearRampToValueAtTime(0.0001, audio.currentTime + duration);
+  osc.connect(gain);
+  gain.connect(audio.destination);
+  osc.start();
+  osc.stop(audio.currentTime + duration + 0.02);
 }
 
-function updateInput(delta: number): void {
-  moveVector.set(0, 0, 0);
-  forward.set(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
-  right.set(forward.z, 0, -forward.x);
-
-  if (keys.has("KeyW")) {
-    moveVector.add(forward);
-  }
-  if (keys.has("KeyS")) {
-    moveVector.sub(forward);
-  }
-  if (keys.has("KeyD")) {
-    moveVector.add(right);
-  }
-  if (keys.has("KeyA")) {
-    moveVector.sub(right);
-  }
-
-  if (moveVector.lengthSq() > 0) {
-    moveVector.normalize();
-    playerDirection.lerp(moveVector, Math.min(1, delta * 14)).normalize();
-    const speed = keys.has("ShiftLeft") || keys.has("ShiftRight") ? 7.3 : 5.5;
-    player.position.addScaledVector(moveVector, speed * delta);
-  }
-
-  const distanceFromCenter = Math.hypot(player.position.x, player.position.z);
-  if (distanceFromCenter > 86) {
-    player.position.multiplyScalar(86 / distanceFromCenter);
-  }
-
-  player.rotation.y = Math.atan2(playerDirection.x, playerDirection.z);
-  playerBody.scale.setScalar(invulnerable > 0 && Math.sin(clock.elapsedTime * 38) > 0 ? 0.92 : 1);
-
-  if (dashCooldown > 0) {
-    dashCooldown -= delta;
-  }
-}
-
-function dash(): void {
-  if (state !== "playing" || dashCooldown > 0) {
+function startMusic(): void {
+  if (!musicEnabled || musicTimer) {
     return;
   }
-  player.position.addScaledVector(playerDirection, 4.8);
-  dashCooldown = 1.35;
-  invulnerable = Math.max(invulnerable, 0.22);
+  const notes = [196, 247, 294, 247, 220, 262, 330, 262];
+  let index = 0;
+  musicTimer = window.setInterval(() => {
+    tone(notes[index % notes.length], 0.08, 0.025);
+    index += 1;
+  }, 260);
 }
 
-function updateCamera(delta: number): void {
-  cameraPitch = THREE.MathUtils.clamp(cameraPitch, 0.22, 0.95);
-  const radius = 8.4;
-  const height = 3.2 + cameraPitch * 4.5;
-  cameraTarget.copy(player.position).add(new THREE.Vector3(0, 1.45, 0));
-  const desired = tempVector.set(
-    player.position.x - Math.sin(cameraYaw) * radius,
-    player.position.y + height,
-    player.position.z - Math.cos(cameraYaw) * radius,
-  );
-  camera.position.lerp(desired, Math.min(1, delta * 8.5));
-  camera.lookAt(cameraTarget);
+function stopMusic(): void {
+  window.clearInterval(musicTimer);
+  musicTimer = 0;
+  void audioContext?.suspend();
 }
 
-function updateEnemies(delta: number): void {
-  for (const enemy of enemies) {
-    enemy.cooldown = Math.max(0, enemy.cooldown - delta);
-    enemy.stun = Math.max(0, enemy.stun - delta);
-
-    const toPlayer = tempVector.copy(player.position).sub(enemy.group.position);
-    toPlayer.y = 0;
-    const distance = toPlayer.length();
-    const direction = distance > 0.001 ? toPlayer.normalize() : tempVector.set(0, 0, 1);
-    enemy.group.rotation.y = Math.atan2(direction.x, direction.z);
-
-    if (enemy.stun <= 0) {
-      if (distance > 1.45) {
-        enemy.group.position.addScaledVector(direction, enemy.speed * delta);
-      } else if (enemy.cooldown <= 0) {
-        applyPlayerDamage(12);
-        enemy.cooldown = 0.85 + Math.random() * 0.45;
-      }
-    }
-
-    const distFromCenter = Math.hypot(enemy.group.position.x, enemy.group.position.z);
-    if (distFromCenter > stormRadius - 2) {
-      tempVectorTwo.copy(enemy.group.position).multiplyScalar(-1).normalize();
-      enemy.group.position.addScaledVector(tempVectorTwo, enemy.speed * delta * 1.25);
-    }
-
-    enemy.group.children.forEach((child, index) => {
-      child.position.y += Math.sin(clock.elapsedTime * 4 + index) * 0.0008;
+function shoot(guy: Guy, tx: number, ty: number, now: number, bullets: Bullet[]): void {
+  const fireRate = guy.id === "dragon" ? 1050 : Math.max(90, 780 - guy.level * 22);
+  if (now - guy.lastShot < fireRate) {
+    return;
+  }
+  guy.lastShot = now;
+  const count = guy.id === "dragon" ? 3 : guy.level >= 30 ? 8 : guy.level >= 20 ? 4 : guy.level >= 5 ? 2 : 1;
+  const base = Math.atan2(ty - guy.y, tx - guy.x);
+  const spread = count === 1 ? 0 : 0.42;
+  for (let index = 0; index < count; index += 1) {
+    const angle = base - spread / 2 + (count === 1 ? 0 : (spread * index) / (count - 1));
+    bullets.push({
+      x: guy.x,
+      y: guy.y,
+      vx: Math.cos(angle) * 12,
+      vy: Math.sin(angle) * 12,
+      damage: guy.id === "dragon" ? 80 : 10 + guy.level * 4,
+      ownerId: guy.id,
+      isBot: guy.isBot,
+      life: guy.level >= 30 ? 420 : 160 + guy.level * 8,
     });
   }
+  tone(guy.id === "dragon" ? 120 : 180 + guy.level * 8, 0.05, 0.025);
 }
 
-function updatePickups(delta: number): void {
-  let nearestDistance = Number.POSITIVE_INFINITY;
-  nearestPickup = null;
-
-  for (const pickup of pickups) {
-    pickup.group.rotation.y += delta * 1.6;
-    pickup.group.position.y = 0.72 + Math.sin(clock.elapsedTime * 2.4 + pickup.bobOffset) * 0.18;
-    const distance = pickup.group.position.distanceTo(player.position);
-    if (distance < 2.4 && distance < nearestDistance) {
-      nearestDistance = distance;
-      nearestPickup = pickup;
-    }
-  }
-
-  if (nearestPickup) {
-    message.textContent = `Press E to pick up ${nearestPickup.weapon.name}`;
-    message.classList.remove("hidden");
-  } else if (state === "playing") {
-    message.textContent = "Outlast the arena";
-    message.classList.toggle("hidden", document.pointerLockElement === renderer.domElement);
-  }
-}
-
-function updateStorm(delta: number): void {
-  stormTimer += delta;
-  stormRadius = Math.max(22, 78 - stormTimer * 0.18);
-  stormRing.scale.setScalar(stormRadius);
-  safeRing.scale.setScalar(stormRadius - 1.8);
-
-  const distance = Math.hypot(player.position.x, player.position.z);
-  if (distance > stormRadius) {
-    applyPlayerDamage(delta * 12);
-  }
-}
-
-function updateSlashEffects(delta: number): void {
-  for (const effect of [...slashEffects.children]) {
-    const life = Number(effect.userData.life) - delta;
-    effect.userData.life = life;
-    effect.scale.multiplyScalar(1 + delta * 2.4);
-    const mesh = effect as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
-    mesh.material.opacity = Math.max(0, life / 0.18) * 0.72;
-    if (life <= 0) {
-      slashEffects.remove(effect);
-      mesh.geometry.dispose();
-      mesh.material.dispose();
-    }
-  }
-}
-
-function updateWeapon(delta: number): void {
-  attackCooldown = Math.max(0, attackCooldown - delta);
-  attackTime = Math.max(0, attackTime - delta);
-  invulnerable = Math.max(0, invulnerable - delta);
-
-  const swing = attackTime > 0 ? Math.sin((attackTime / 0.24) * Math.PI) : 0;
-  playerWeapon.rotation.set(0, 0, -0.1 - swing * 1.35);
-  playerWeapon.position.set(0.58 + swing * 0.12, 1.18, -0.2 - swing * 0.28);
-}
-
-function updateHud(): void {
-  healthText.textContent = Math.ceil(playerHealth).toString();
-  aliveText.textContent = (enemies.length + 1).toString();
-  scoreText.textContent = score.toString();
-  stormText.textContent = `${Math.max(0, Math.round(stormRadius))}m`;
-  healthBar.style.transform = `scaleX(${THREE.MathUtils.clamp(playerHealth / 100, 0, 1)})`;
-  cooldownBar.style.transform = `scaleX(${
-    1 - THREE.MathUtils.clamp(attackCooldown / equippedWeapon.cooldown, 0, 1)
-  })`;
-}
-
-function animate(): void {
-  requestAnimationFrame(animate);
-  const delta = Math.min(clock.getDelta(), 0.033);
-
-  if (state === "playing") {
-    updateInput(delta);
-    updateEnemies(delta);
-    updatePickups(delta);
-    updateStorm(delta);
-    updateWeapon(delta);
-  }
-
-  updateSlashEffects(delta);
-  updateCamera(delta);
-  updateHud();
-  renderer.render(scene, camera);
-}
-
-function resize(): void {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-}
-
-window.addEventListener("resize", resize);
-window.addEventListener("keydown", (event) => {
-  keys.add(event.code);
-  if (event.code === "Space") {
-    event.preventDefault();
-    dash();
-  }
-  if (event.code === "KeyE") {
-    pickUpNearest();
-  }
-  if (event.code === "KeyR" && state !== "playing") {
-    startMatch();
-  }
-});
-window.addEventListener("keyup", (event) => {
-  keys.delete(event.code);
-});
-window.addEventListener("mousemove", (event) => {
-  if (document.pointerLockElement !== renderer.domElement) {
+function drawGuy(guy: Guy): void {
+  const sx = mode === "fantasy" ? guy.x - camX : guy.x;
+  const sy = mode === "fantasy" ? guy.y - camY : guy.y;
+  if (sx < -120 || sx > gameCanvas.width + 120 || sy < -120 || sy > gameCanvas.height + 120) {
     return;
   }
-  pointer.x += event.movementX;
-  pointer.y += event.movementY;
-  cameraYaw -= event.movementX * 0.0024;
-  cameraPitch -= event.movementY * 0.0016;
-});
-window.addEventListener("mousedown", (event) => {
-  if (event.button !== 0) {
+  ctx.save();
+  ctx.translate(sx, sy);
+  if (draggingGuy === guy) {
+    ctx.shadowColor = "#34d399";
+    ctx.shadowBlur = 18;
+  }
+  ctx.fillStyle = guy.id === "dragon" ? "#b91c1c" : guy.isBot ? "#ef4444" : "#34d399";
+  ctx.beginPath();
+  ctx.arc(0, 0, guy.id === "dragon" ? 80 : guy.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#020617";
+  ctx.stroke();
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 14px Arial";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(guy.id === "dragon" ? "BOSS" : `L${guy.level}`, 0, 0);
+  if (mode === "fantasy") {
+    const barWidth = (guy.id === "dragon" ? 160 : guy.radius * 2) * clamp(guy.hp / guy.maxHp, 0, 1);
+    ctx.fillStyle = "#020617";
+    ctx.fillRect(-(guy.id === "dragon" ? 80 : guy.radius), -guy.radius - 18, guy.id === "dragon" ? 160 : guy.radius * 2, 7);
+    ctx.fillStyle = "#10b981";
+    ctx.fillRect(-(guy.id === "dragon" ? 80 : guy.radius), -guy.radius - 18, barWidth, 7);
+    ctx.fillStyle = "#fff";
+    ctx.font = "12px Arial";
+    ctx.fillText(guy.name, 0, -guy.radius - 30);
+  }
+  ctx.restore();
+}
+
+function drawZombie(zombie: Zombie): void {
+  ctx.save();
+  ctx.translate(zombie.x, zombie.y);
+  ctx.fillStyle = zombie.isBoss ? "#b91c1c" : "#166534";
+  ctx.beginPath();
+  ctx.arc(0, 0, zombie.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#020617";
+  ctx.stroke();
+  ctx.fillStyle = "#020617";
+  ctx.fillRect(-zombie.radius, -zombie.radius - 12, zombie.radius * 2, 7);
+  ctx.fillStyle = "#ef4444";
+  ctx.fillRect(-zombie.radius, -zombie.radius - 12, zombie.radius * 2 * clamp(zombie.hp / zombie.maxHp, 0, 1), 7);
+  if (zombie.isBoss) {
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 14px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("BOSS", 0, -zombie.radius - 20);
+  }
+  ctx.restore();
+}
+
+function drawGrid(): void {
+  ctx.fillStyle = "#022c22";
+  ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+  ctx.strokeStyle = "rgb(5 150 105 / 22%)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = -(camX % 50); x < gameCanvas.width; x += 50) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, gameCanvas.height);
+  }
+  for (let y = -(camY % 50); y < gameCanvas.height; y += 50) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(gameCanvas.width, y);
+  }
+  ctx.stroke();
+}
+
+function drawNormal(): void {
+  ctx.fillStyle = "#4b5563";
+  ctx.fillRect(0, 0, 60, gameCanvas.height);
+  ctx.fillStyle = "#9ca3af";
+  ctx.fillRect(48, 0, 12, gameCanvas.height);
+  ctx.save();
+  ctx.translate(25, gameCanvas.height / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 24px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("YOUR BASE", 0, 0);
+  ctx.restore();
+  normalBullets.forEach((bullet) => {
+    ctx.fillStyle = "#fef08a";
+    ctx.beginPath();
+    ctx.arc(bullet.x, bullet.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  zombies.forEach(drawZombie);
+  guys.forEach(drawGuy);
+  if (dragRect) {
+    ctx.fillStyle = "rgb(52 211 153 / 22%)";
+    ctx.strokeStyle = "#34d399";
+    ctx.lineWidth = 2;
+    ctx.fillRect(dragRect.x, dragRect.y, dragRect.w, dragRect.h);
+    ctx.strokeRect(dragRect.x, dragRect.y, dragRect.w, dragRect.h);
+  }
+}
+
+function drawFantasy(): void {
+  ctx.strokeStyle = "#ef4444";
+  ctx.lineWidth = 10;
+  ctx.strokeRect(-camX, -camY, arenaSize, arenaSize);
+  ctx.fillStyle = "rgb(16 185 129 / 16%)";
+  ctx.beginPath();
+  ctx.arc(shelter.x - camX, shelter.y - camY, shelter.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#34d399";
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  ctx.fillStyle = "rgb(139 92 246 / 16%)";
+  ctx.fillRect(dungeon.x - camX, dungeon.y - camY, dungeon.w, dungeon.h);
+  ctx.strokeStyle = "#8b5cf6";
+  ctx.strokeRect(dungeon.x - camX, dungeon.y - camY, dungeon.w, dungeon.h);
+  for (const food of fantasyFood) {
+    ctx.fillStyle = "#34d399";
+    ctx.beginPath();
+    ctx.arc(food.x - camX, food.y - camY, 9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.stroke();
+  }
+  fantasyBullets.forEach((bullet) => {
+    ctx.fillStyle = bullet.isBot ? "#f87171" : "#fef08a";
+    ctx.beginPath();
+    ctx.arc(bullet.x - camX, bullet.y - camY, 5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  fantasyEntities.forEach(drawGuy);
+}
+
+function drawFloatTexts(): void {
+  for (const text of floatTexts) {
+    ctx.save();
+    ctx.globalAlpha = clamp(text.life / 70, 0, 1);
+    ctx.fillStyle = text.color;
+    ctx.font = "bold 20px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(text.text, text.world ? text.x - camX : text.x, text.world ? text.y - camY : text.y);
+    ctx.restore();
+  }
+}
+
+function drawMinimap(): void {
+  minimapContext.clearRect(0, 0, 192, 192);
+  const scale = 192 / arenaSize;
+  minimapContext.fillStyle = "rgb(16 185 129 / 32%)";
+  minimapContext.beginPath();
+  minimapContext.arc(shelter.x * scale, shelter.y * scale, shelter.radius * scale, 0, Math.PI * 2);
+  minimapContext.fill();
+  minimapContext.fillStyle = "rgb(139 92 246 / 35%)";
+  minimapContext.fillRect(dungeon.x * scale, dungeon.y * scale, dungeon.w * scale, dungeon.h * scale);
+  for (const entity of fantasyEntities) {
+    minimapContext.fillStyle = entity.id === "player" ? "#34d399" : entity.id === "dragon" ? "#a78bfa" : "#ef4444";
+    minimapContext.fillRect(entity.x * scale - 2, entity.y * scale - 2, entity.id === "dragon" ? 7 : 4, entity.id === "dragon" ? 7 : 4);
+  }
+  minimapContext.strokeStyle = "rgb(255 255 255 / 45%)";
+  minimapContext.strokeRect(camX * scale, camY * scale, gameCanvas.width * scale, gameCanvas.height * scale);
+}
+
+function draw(): void {
+  drawGrid();
+  if (mode === "normal") {
+    drawNormal();
+  } else if (mode === "fantasy") {
+    drawFantasy();
+    drawMinimap();
+  }
+  drawFloatTexts();
+}
+
+function updateFloatTexts(): void {
+  for (let index = floatTexts.length - 1; index >= 0; index -= 1) {
+    const text = floatTexts[index];
+    text.y -= 0.45;
+    text.life -= 1;
+    if (text.life <= 0) {
+      floatTexts.splice(index, 1);
+    }
+  }
+}
+
+function getBuySpawnPoint(): { x: number; y: number } {
+  const startX = 132;
+  const startY = gameCanvas.height / 2;
+  const spacing = 48;
+  for (let slot = 0; slot < 90; slot += 1) {
+    const col = Math.floor(slot / 7);
+    const row = slot % 7;
+    const x = startX + col * spacing;
+    const y = startY + (row - 3) * spacing;
+    const occupied = guys.some((guy) => dist(guy.x, guy.y, x, y) < 12);
+    if (!occupied) {
+      return { x, y };
+    }
+  }
+  return { x: startX, y: startY };
+}
+
+function buyNormalGuy(level: 1 | 2 | 3): void {
+  const cost = buyCosts[level];
+  if (coins < cost) {
+    showToast("Not enough coins!", "#ef4444");
     return;
   }
-  if (state === "playing") {
-    if (document.pointerLockElement !== renderer.domElement) {
-      renderer.domElement.requestPointerLock().catch(() => undefined);
+  coins -= cost;
+  const spawn = getBuySpawnPoint();
+  guys.push(makeGuy(spawn.x, spawn.y, level, false, "player"));
+  tone(520, 0.08, 0.05);
+  updateUI();
+}
+
+function updateNormal(now: number, delta: number): void {
+  spawnTimer += delta;
+  const interval = Math.max(0.45, 1.45 - wave * 0.04);
+  if (spawnTimer > interval) {
+    spawnTimer = 0;
+    const isBoss = wave % 5 === 0 && Math.random() < 0.22;
+    zombies.push(makeZombie(gameCanvas.width + 50, 90 + Math.random() * Math.max(120, gameCanvas.height - 180), isBoss));
+  }
+  if (zombies.length < Math.min(3 + wave, 16) && Math.random() < 0.006 + wave * 0.0005) {
+    zombies.push(makeZombie(gameCanvas.width + 50, 80 + Math.random() * Math.max(140, gameCanvas.height - 160), false));
+  }
+  if (now > 15000 + wave * 11500 && zombies.length < 4) {
+    wave += 1;
+    coins += 15 + wave * 2;
+    addFloatText(`Wave ${wave}`, gameCanvas.width / 2, 130, "#86efac");
+  }
+  for (const zombie of zombies) {
+    zombie.x -= zombie.speed * (delta * 60);
+    if (zombie.x < 80) {
+      health -= zombie.isBoss ? 15 : 5;
+      zombie.x += 40;
+      tone(110, 0.06, 0.04);
+      if (health <= 0) {
+        triggerGameOver(false);
+      }
     }
-    attack();
+  }
+  for (const guy of guys) {
+    if (!zombies.length) {
+      continue;
+    }
+    const target = zombies.reduce((best, zombie) =>
+      dist(guy.x, guy.y, zombie.x, zombie.y) < dist(guy.x, guy.y, best.x, best.y) ? zombie : best,
+    );
+    shoot(guy, target.x, target.y, now, normalBullets);
+  }
+  for (let index = normalBullets.length - 1; index >= 0; index -= 1) {
+    const bullet = normalBullets[index];
+    bullet.x += bullet.vx * (delta * 60);
+    bullet.y += bullet.vy * (delta * 60);
+    bullet.life -= 1;
+    let hit = false;
+    for (let zIndex = zombies.length - 1; zIndex >= 0; zIndex -= 1) {
+      const zombie = zombies[zIndex];
+      if (dist(bullet.x, bullet.y, zombie.x, zombie.y) < zombie.radius) {
+        zombie.hp -= bullet.damage;
+        hit = true;
+        if (zombie.hp <= 0) {
+          coins += zombie.isBoss ? 50 : 5;
+          zombies.splice(zIndex, 1);
+          addFloatText(zombie.isBoss ? "+50" : "+5", zombie.x, zombie.y, "#fef08a");
+        }
+        break;
+      }
+    }
+    if (hit || bullet.life <= 0 || bullet.x > gameCanvas.width + 120) {
+      normalBullets.splice(index, 1);
+    }
+  }
+}
+
+function isInDungeon(x: number, y: number): boolean {
+  return x > dungeon.x && x < dungeon.x + dungeon.w && y > dungeon.y && y < dungeon.y + dungeon.h;
+}
+
+function updateFantasy(now: number, delta: number): void {
+  if (!player) {
+    return;
+  }
+  if (!inShelter) {
+    let nx = player.x;
+    let ny = player.y;
+    const speed = player.speed * delta * 60;
+    if (keys.has("w") || keys.has("arrowup")) ny -= speed;
+    if (keys.has("s") || keys.has("arrowdown")) ny += speed;
+    if (keys.has("a") || keys.has("arrowleft")) nx -= speed;
+    if (keys.has("d") || keys.has("arrowright")) nx += speed;
+    nx = clamp(nx, 50, arenaSize - 50);
+    ny = clamp(ny, 50, arenaSize - 50);
+    if (dist(nx, ny, shelter.x, shelter.y) > shelter.radius + 20) {
+      player.x = nx;
+      player.y = ny;
+    }
+  }
+  enterShelterBtn.classList.toggle(
+    "hidden",
+    inShelter || dist(player.x, player.y, shelter.x, shelter.y) > shelter.radius + 100,
+  );
+  if ((mouse.down || keys.has("z")) && !inShelter) {
+    shoot(player, mouse.x + camX, mouse.y + camY, now, fantasyBullets);
+  }
+  camX = clamp(player.x - gameCanvas.width / 2, 0, arenaSize - gameCanvas.width);
+  camY = clamp(player.y - gameCanvas.height / 2, 0, arenaSize - gameCanvas.height);
+  if (inShelter && performance.now() - shelterStartedAt > 60000) {
+    inShelter = false;
+    player.x = shelter.x + shelter.radius + 80;
+    showToast("Shelter time expired.", "#ef4444");
+  }
+  if (Math.random() < 0.012 && fantasyFood.length < 18) {
+    let x = 0;
+    let y = 0;
+    do {
+      x = 80 + Math.random() * (arenaSize - 160);
+      y = 80 + Math.random() * (arenaSize - 160);
+    } while (dist(x, y, shelter.x, shelter.y) < shelter.radius + 40);
+    fantasyFood.push({ x, y });
+  }
+  for (let index = fantasyFood.length - 1; index >= 0; index -= 1) {
+    const food = fantasyFood[index];
+    for (const entity of fantasyEntities) {
+      if (entity.id !== "dragon" && entity.hp < entity.maxHp && dist(entity.x, entity.y, food.x, food.y) < entity.radius + 16) {
+        entity.hp = Math.min(entity.maxHp, entity.hp + 25);
+        addFloatText("+25 HP", entity.x, entity.y - 30, "#34d399", true);
+        fantasyFood.splice(index, 1);
+        break;
+      }
+    }
+  }
+  if (dragon) {
+    const target = fantasyEntities
+      .filter((entity) => entity.id !== "dragon" && isInDungeon(entity.x, entity.y))
+      .sort((a, b) => dist(dragon!.x, dragon!.y, a.x, a.y) - dist(dragon!.x, dragon!.y, b.x, b.y))[0];
+    if (target) {
+      shoot(dragon, target.x, target.y, now, fantasyBullets);
+    }
+  }
+  for (const bot of fantasyEntities) {
+    if (!bot.isBot || bot.id === "dragon") {
+      continue;
+    }
+    const enemies = fantasyEntities.filter((entity) => entity !== bot && entity.id !== "dragon");
+    const target = enemies.sort((a, b) => dist(bot.x, bot.y, a.x, a.y) - dist(bot.x, bot.y, b.x, b.y))[0];
+    if (!target) {
+      continue;
+    }
+    const distance = dist(bot.x, bot.y, target.x, target.y);
+    const angle = Math.atan2(target.y - bot.y, target.x - bot.x);
+    if (distance > 280) {
+      bot.x += Math.cos(angle) * bot.speed * delta * 35;
+      bot.y += Math.sin(angle) * bot.speed * delta * 35;
+    } else if (distance < 160) {
+      bot.x -= Math.cos(angle) * bot.speed * delta * 28;
+      bot.y -= Math.sin(angle) * bot.speed * delta * 28;
+    }
+    bot.x = clamp(bot.x, 50, arenaSize - 50);
+    bot.y = clamp(bot.y, 50, arenaSize - 50);
+    if (dist(bot.x, bot.y, shelter.x, shelter.y) < shelter.radius + 30) {
+      bot.x += Math.cos(angle) * 80;
+      bot.y += Math.sin(angle) * 80;
+    }
+    shoot(bot, target.x, target.y, now, fantasyBullets);
+  }
+  for (let index = fantasyBullets.length - 1; index >= 0; index -= 1) {
+    const bullet = fantasyBullets[index];
+    bullet.x += bullet.vx * delta * 60;
+    bullet.y += bullet.vy * delta * 60;
+    bullet.life -= 1;
+    if (
+      bullet.x < 0 ||
+      bullet.y < 0 ||
+      bullet.x > arenaSize ||
+      bullet.y > arenaSize ||
+      dist(bullet.x, bullet.y, shelter.x, shelter.y) < shelter.radius
+    ) {
+      fantasyBullets.splice(index, 1);
+      continue;
+    }
+    let hit = false;
+    for (let entityIndex = fantasyEntities.length - 1; entityIndex >= 0; entityIndex -= 1) {
+      const entity = fantasyEntities[entityIndex];
+      if (entity.id === bullet.ownerId || dist(bullet.x, bullet.y, entity.x, entity.y) > entity.radius) {
+        continue;
+      }
+      entity.hp -= bullet.damage;
+      hit = true;
+      if (entity.hp <= 0) {
+        if (entity.id === "player") {
+          triggerGameOver(false);
+        } else {
+          if (bullet.ownerId === "player") {
+            const reward = entity.id === "dragon" ? 100000 : 5000;
+            setMoney(fantasyMoneyValue + reward);
+            addFloatText(`+${reward.toLocaleString()}`, entity.x, entity.y, "#fef08a", true);
+          }
+          fantasyEntities.splice(entityIndex, 1);
+          if (entity.id === "dragon") {
+            dragon = null;
+          }
+        }
+      }
+      break;
+    }
+    if (hit || bullet.life <= 0) {
+      fantasyBullets.splice(index, 1);
+    }
+  }
+  const enemiesLeft = fantasyEntities.filter((entity) => entity.id !== "player" && entity.id !== "dragon").length;
+  if (enemiesLeft === 0 && player.hp > 0) {
+    triggerGameOver(true);
+  }
+}
+
+function gameLoop(now: number): void {
+  const delta = Math.min((now - lastTime) / 1000, 0.033);
+  lastTime = now;
+  if (isPlaying && !isPaused) {
+    if (mode === "normal") {
+      updateNormal(now, delta);
+    } else if (mode === "fantasy") {
+      updateFantasy(now, delta);
+    }
+    updateFloatTexts();
+    updateUI();
+  }
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+function resetCollections(): void {
+  guys.length = 0;
+  zombies.length = 0;
+  normalBullets.length = 0;
+  fantasyEntities.length = 0;
+  fantasyBullets.length = 0;
+  fantasyFood.length = 0;
+  floatTexts.length = 0;
+}
+
+function startNormal(): void {
+  resetCollections();
+  mode = "normal";
+  isPlaying = true;
+  isPaused = false;
+  health = 100;
+  coins = 50;
+  wave = 1;
+  spawnTimer = 0;
+  camX = 0;
+  camY = 0;
+  const first = getBuySpawnPoint();
+  guys.push(makeGuy(first.x, first.y, 1, false, "player"));
+  hide(rulesScreen);
+  hide(startScreen);
+  show(gameUI);
+  show(normalUI);
+  hide(fantasyStatsUI);
+  hide(fantasyMinimap);
+  hide(leaveFantasyBtn);
+  updateUI();
+}
+
+function launchFantasy(): void {
+  resetCollections();
+  mode = "fantasy";
+  isPlaying = true;
+  isPaused = false;
+  inShelter = false;
+  hide(matchmakingScreen);
+  hide(fantasyShopScreen);
+  show(gameUI);
+  hide(normalUI);
+  show(fantasyStatsUI);
+  show(fantasyMinimap);
+  show(leaveFantasyBtn);
+  player = makeGuy(shelter.x, shelter.y - shelter.radius - 100, equippedFantasyLevel, false, "player");
+  fantasyEntities.push(player);
+  dragon = makeGuy(dungeon.x + dungeon.w / 2, dungeon.y + dungeon.h / 2, 30, true, "dragon");
+  dragon.hp = 15000;
+  dragon.maxHp = 15000;
+  dragon.speed = 0;
+  dragon.name = "Dragon";
+  fantasyEntities.push(dragon);
+  for (let index = 0; index < 9; index += 1) {
+    let x = 0;
+    let y = 0;
+    do {
+      x = 120 + Math.random() * (arenaSize - 240);
+      y = 120 + Math.random() * (arenaSize - 240);
+    } while (dist(x, y, shelter.x, shelter.y) < shelter.radius + 80);
+    fantasyEntities.push(makeGuy(x, y, clamp(equippedFantasyLevel + Math.floor(Math.random() * 7) - 3, 1, 30), true));
+  }
+  updateUI();
+}
+
+function resetToMenu(): void {
+  isPlaying = false;
+  isPaused = false;
+  mode = "";
+  player = null;
+  dragon = null;
+  draggingGuy = null;
+  dragRect = null;
+  clearInterval(matchmakingId);
+  resetCollections();
+  hide(gameUI);
+  hide(gameOverScreen);
+  hide(quitConfirmScreen);
+  hide(matchmakingScreen);
+  hide(fantasyShopScreen);
+  hide(enterShelterBtn);
+  show(startScreen);
+}
+
+function triggerGameOver(won: boolean): void {
+  if (!isPlaying) {
+    return;
+  }
+  isPlaying = false;
+  hide(gameUI);
+  hide(enterShelterBtn);
+  show(gameOverScreen);
+  if (mode === "normal") {
+    gameOverTitle.textContent = "BASE DESTROYED";
+    gameOverStats.textContent = `You survived to Wave ${wave}!`;
+    saveScore();
+  } else if (won) {
+    gameOverTitle.textContent = "VICTORY ROYALE!";
+    gameOverStats.textContent = "+20,000 Money Added to Bank!";
+    setMoney(fantasyMoneyValue + 20000);
+  } else {
+    gameOverTitle.textContent = "ELIMINATED";
+    gameOverStats.textContent = "You were defeated in the arena.";
+  }
+}
+
+function renderFantasyShop(): void {
+  fantasyShopGrid.innerHTML = "";
+  for (let level = 1; level <= 30; level += 1) {
+    const cost = level === 1 ? 0 : level * 2000;
+    const button = document.createElement("button");
+    button.className = `shop-item ${equippedFantasyLevel === level ? "equipped" : ""}`;
+    button.innerHTML = `<strong>Level ${level}</strong><span>${cost === 0 ? "FREE" : `$${cost.toLocaleString()}`}</span>`;
+    button.addEventListener("click", () => {
+      if (equippedFantasyLevel === level) {
+        return;
+      }
+      if (fantasyMoneyValue < cost) {
+        showToast("NOT ENOUGH MONEY!", "#ef4444");
+        return;
+      }
+      equippedFantasyLevel = level;
+      setMoney(fantasyMoneyValue - cost);
+      renderFantasyShop();
+      showToast(`Level ${level} equipped!`);
+    });
+    fantasyShopGrid.append(button);
+  }
+}
+
+const tutorialTexts = [
+  "Welcome to Merge Guys!",
+  "Use W, A, S, D or Arrow Keys to move around in Fantasy Mode.",
+  "Click and drag a box around your guys to merge them in Normal Mode.",
+  "Merged guys reach higher levels, shoot faster, and hit harder.",
+  "Normal Mode: defend your base against zombie waves.",
+  "Fantasy Mode: fight bots in a massive arena and avoid the dragon.",
+  "Collect food, grow stronger, and survive.",
+];
+
+function drawTutorial(): void {
+  tutorialContext.fillStyle = "#022c22";
+  tutorialContext.fillRect(0, 0, tutorialCanvas.width, tutorialCanvas.height);
+  tutorialContext.strokeStyle = "rgb(5 150 105 / 25%)";
+  for (let x = 0; x < tutorialCanvas.width; x += 40) {
+    tutorialContext.beginPath();
+    tutorialContext.moveTo(x, 0);
+    tutorialContext.lineTo(x, tutorialCanvas.height);
+    tutorialContext.stroke();
+  }
+  for (let y = 0; y < tutorialCanvas.height; y += 40) {
+    tutorialContext.beginPath();
+    tutorialContext.moveTo(0, y);
+    tutorialContext.lineTo(tutorialCanvas.width, y);
+    tutorialContext.stroke();
+  }
+  const time = performance.now() / 500;
+  const x = 400 + Math.cos(time) * 140;
+  const y = 190 + Math.sin(time * 1.3) * 70;
+  const level = 1 + (tutorialStep % 6);
+  const drawDemoGuy = (gx: number, gy: number, bot = false): void => {
+    tutorialContext.fillStyle = bot ? "#ef4444" : "#34d399";
+    tutorialContext.beginPath();
+    tutorialContext.arc(gx, gy, 20 + level, 0, Math.PI * 2);
+    tutorialContext.fill();
+    tutorialContext.strokeStyle = "#020617";
+    tutorialContext.stroke();
+    tutorialContext.fillStyle = "#fff";
+    tutorialContext.font = "bold 14px Arial";
+    tutorialContext.textAlign = "center";
+    tutorialContext.textBaseline = "middle";
+    tutorialContext.fillText(`L${level}`, gx, gy);
+  };
+  drawDemoGuy(x, y);
+  drawDemoGuy(260, 210, tutorialStep > 4);
+  drawDemoGuy(540, 210, tutorialStep > 4);
+  if (tutorialStep === 2 || tutorialStep === 3) {
+    tutorialContext.fillStyle = "rgb(52 211 153 / 24%)";
+    tutorialContext.strokeStyle = "#34d399";
+    tutorialContext.fillRect(220, 145, 360, 135);
+    tutorialContext.strokeRect(220, 145, 360, 135);
+  }
+  if (tutorialStep > 3) {
+    for (let index = 0; index < 5; index += 1) {
+      tutorialContext.fillStyle = "#fef08a";
+      tutorialContext.beginPath();
+      tutorialContext.arc(320 + ((performance.now() / 3 + index * 105) % 260), 205 + Math.sin(time + index) * 35, 5, 0, Math.PI * 2);
+      tutorialContext.fill();
+    }
+  }
+  tutorialId = requestAnimationFrame(drawTutorial);
+}
+
+function renderTutorialStep(): void {
+  tutorialScreenText.textContent = tutorialTexts[tutorialStep];
+  tutorialDots.innerHTML = "";
+  tutorialTexts.forEach((_, index) => {
+    const dot = document.createElement("div");
+    dot.className = `dot ${index === tutorialStep ? "active" : ""}`;
+    tutorialDots.append(dot);
+  });
+}
+
+function startTutorial(): void {
+  tutorialStep = 0;
+  renderTutorialStep();
+  show(tutorialScreen);
+  cancelAnimationFrame(tutorialId);
+  drawTutorial();
+  clearInterval(tutorialTimer);
+  tutorialTimer = window.setInterval(() => {
+    tutorialStep += 1;
+    if (tutorialStep >= tutorialTexts.length) {
+      closeTutorial();
+      return;
+    }
+    renderTutorialStep();
+  }, 3300);
+}
+
+function closeTutorial(): void {
+  hide(tutorialScreen);
+  clearInterval(tutorialTimer);
+  cancelAnimationFrame(tutorialId);
+}
+
+function pointerOnUI(event: MouseEvent | TouchEvent): boolean {
+  const target = event.target as HTMLElement | null;
+  return Boolean(target?.closest("button,input,.panel,.hud-row,.fantasy-stats,.minimap"));
+}
+
+function canvasDown(event: MouseEvent): void {
+  if (!isPlaying || isPaused || pointerOnUI(event)) {
+    return;
+  }
+  mouse.down = true;
+  mouse.startX = event.clientX;
+  mouse.startY = event.clientY;
+  mouse.x = event.clientX;
+  mouse.y = event.clientY;
+  if (mode === "normal") {
+    draggingGuy = [...guys].reverse().find((guy) => dist(event.clientX, event.clientY, guy.x, guy.y) < guy.radius) ?? null;
+    if (!draggingGuy) {
+      dragRect = { x: event.clientX, y: event.clientY, w: 0, h: 0 };
+    }
+  }
+}
+
+function canvasMove(event: MouseEvent): void {
+  mouse.x = event.clientX;
+  mouse.y = event.clientY;
+  if (draggingGuy) {
+    draggingGuy.x = event.clientX;
+    draggingGuy.y = event.clientY;
+  } else if (dragRect && mouse.down) {
+    dragRect.w = event.clientX - dragRect.x;
+    dragRect.h = event.clientY - dragRect.y;
+  }
+}
+
+function mergeGuys(selected: Guy[]): void {
+  if (selected.length < 2) {
+    return;
+  }
+  selected.sort((a, b) => b.level - a.level);
+  const main = selected[0];
+  const gained = selected.slice(1).reduce((sum, guy) => sum + guy.level, 0);
+  for (const guy of selected.slice(1)) {
+    const index = guys.indexOf(guy);
+    if (index >= 0) {
+      guys.splice(index, 1);
+    }
+  }
+  updateGuyLevel(main, main.level + Math.max(1, Math.floor(gained / 2)));
+  addFloatText("MERGED!", main.x, main.y - 34, "#fef08a");
+  tone(660, 0.09, 0.06);
+}
+
+function canvasUp(): void {
+  if (!mouse.down) {
+    return;
+  }
+  mouse.down = false;
+  if (draggingGuy) {
+    const target = guys.find((guy) => guy !== draggingGuy && dist(guy.x, guy.y, draggingGuy!.x, draggingGuy!.y) < guy.radius * 2);
+    if (target) {
+      updateGuyLevel(target, target.level + Math.max(1, Math.floor(draggingGuy.level)));
+      guys.splice(guys.indexOf(draggingGuy), 1);
+      addFloatText("MERGED!", target.x, target.y - 34, "#fef08a");
+      tone(660, 0.09, 0.06);
+    }
+    draggingGuy = null;
+  } else if (dragRect) {
+    const minX = Math.min(dragRect.x, dragRect.x + dragRect.w);
+    const maxX = Math.max(dragRect.x, dragRect.x + dragRect.w);
+    const minY = Math.min(dragRect.y, dragRect.y + dragRect.h);
+    const maxY = Math.max(dragRect.y, dragRect.y + dragRect.h);
+    mergeGuys(guys.filter((guy) => guy.x >= minX && guy.x <= maxX && guy.y >= minY && guy.y <= maxY));
+    dragRect = null;
+  }
+}
+
+window.addEventListener("resize", resizeCanvas);
+window.addEventListener("keydown", (event) => keys.add(event.key.toLowerCase()));
+window.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
+window.addEventListener("blur", () => {
+  keys.clear();
+  mouse.down = false;
+  draggingGuy = null;
+  dragRect = null;
+});
+gameCanvas.addEventListener("mousedown", canvasDown);
+gameCanvas.addEventListener("mousemove", canvasMove);
+gameCanvas.addEventListener("mouseup", canvasUp);
+gameCanvas.addEventListener("mouseleave", canvasUp);
+
+usernameInput.value = localStorage.getItem(storageKeys.username) ?? "";
+setMoney(fantasyMoneyValue);
+resizeCanvas();
+draw();
+
+usernameInput.addEventListener("input", () => localStorage.setItem(storageKeys.username, usernameInput.value.trim()));
+playBtn.addEventListener("click", () => {
+  if (!usernameInput.value.trim()) {
+    show(nameError);
+    window.setTimeout(() => hide(nameError), 2000);
+    return;
+  }
+  username = usernameInput.value.trim();
+  localStorage.setItem(storageKeys.username, username);
+  hide(startScreen);
+  show(rulesScreen);
+  hide(nameError);
+  usernameInput.blur();
+  if (musicEnabled) {
+    startMusic();
+  }
+});
+rulesBackBtn.addEventListener("click", () => {
+  hide(rulesScreen);
+  show(startScreen);
+});
+normalModeBtn.addEventListener("click", startNormal);
+fantasyShopBtn.addEventListener("click", () => {
+  hide(rulesScreen);
+  show(fantasyShopScreen);
+  renderFantasyShop();
+  updateUI();
+});
+closeFantasyShopBtn.addEventListener("click", () => {
+  hide(fantasyShopScreen);
+  show(rulesScreen);
+});
+startFightBtn.addEventListener("click", () => {
+  hide(fantasyShopScreen);
+  show(matchmakingScreen);
+  let count = 5;
+  countdownTimer.textContent = String(count);
+  playerCountText.textContent = "1/10";
+  clearInterval(matchmakingId);
+  matchmakingId = window.setInterval(() => {
+    count -= 1;
+    countdownTimer.textContent = String(count);
+    if (count <= 0) {
+      clearInterval(matchmakingId);
+      launchFantasy();
+    }
+  }, 1000);
+});
+cancelMatchBtn.addEventListener("click", () => {
+  clearInterval(matchmakingId);
+  hide(matchmakingScreen);
+  show(fantasyShopScreen);
+});
+leaderboardBtn.addEventListener("click", () => {
+  renderLeaderboard();
+  show(leaderboardScreen);
+});
+closeLeaderboardBtn.addEventListener("click", () => hide(leaderboardScreen));
+tutorialBtn.addEventListener("click", startTutorial);
+closeTutorialBtn.addEventListener("click", closeTutorial);
+homeBtn.addEventListener("click", () => {
+  isPaused = true;
+  show(quitConfirmScreen);
+});
+cancelQuitBtn.addEventListener("click", () => {
+  isPaused = false;
+  hide(quitConfirmScreen);
+});
+confirmQuitBtn.addEventListener("click", resetToMenu);
+restartBtn.addEventListener("click", resetToMenu);
+leaveFantasyBtn.addEventListener("click", resetToMenu);
+buyLvl1Btn.addEventListener("click", () => buyNormalGuy(1));
+buyLvl2Btn.addEventListener("click", () => buyNormalGuy(2));
+buyLvl3Btn.addEventListener("click", () => buyNormalGuy(3));
+enterShelterBtn.addEventListener("click", () => {
+  if (!player) {
+    return;
+  }
+  if (fantasyMoneyValue < shelter.cost) {
+    showToast("Need $60,000 to enter shelter.", "#ef4444");
+    return;
+  }
+  setMoney(fantasyMoneyValue - shelter.cost);
+  player.x = shelter.x;
+  player.y = shelter.y;
+  inShelter = true;
+  shelterStartedAt = performance.now();
+  hide(enterShelterBtn);
+  showToast("Shelter entered.");
+});
+musicBtn.addEventListener("click", () => {
+  musicEnabled = !musicEnabled;
+  musicBtn.textContent = musicEnabled ? "Music: On" : "Music: Off";
+  if (musicEnabled) {
+    startMusic();
+  } else {
+    stopMusic();
   }
 });
 
-startButton.addEventListener("click", startMatch);
-restartButton.addEventListener("click", startMatch);
-renderer.domElement.addEventListener("click", () => {
-  if (state === "playing" && document.pointerLockElement !== renderer.domElement) {
-    renderer.domElement.requestPointerLock().catch(() => undefined);
-  }
-});
+requestAnimationFrame(gameLoop);
 
-addProps();
-equipWeapon(equippedWeapon);
-setState("start");
-updateCamera(1);
-animate();
+export {};
