@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { ARENA_RADIUS, sampleTerrainHeight } from "./terrain";
 
-export const LIGHTNING_STRIKE_CHANCE = 0.03;
+export const LIGHTNING_STRIKE_CHANCE = 0.1;
 export const LIGHTNING_STRIKE_DAMAGE = 50;
 
 type StrikeFlash = {
