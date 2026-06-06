@@ -20,8 +20,18 @@ import {
   LIGHTNING_STRIKE_DAMAGE,
 } from "./lightningStorm";
 import { FortnitePostPipeline, getPostFxQuality } from "./postProcessing";
-import { clearTreeShelters, isPlayerUnderShelter, registerTreeShelter } from "./shelter";
+import {
+  clearTreeShelters,
+  isPlayerUnderShelter,
+  registerTreeShelter,
+} from "./shelter";
 import { FpsMeter } from "./fpsMeter";
+import {
+  createArenaBuildings,
+  pushEnemyAwayFromBuildings,
+  resolveBuildingCollision,
+  type ArenaBuilding,
+} from "./arenaBuildings";
 import { ArenaMinimap } from "./minimap";
 import {
   applyAdaptivePixelRatio,
@@ -113,9 +123,14 @@ const CHARGED_KNOCKBACK_MULTIPLIER = 1.65;
 
 type GameState = "start" | "playing" | "ended";
 
+type EnemyCombatTarget =
+  | { kind: "player"; position: THREE.Vector3 }
+  | { kind: "enemy"; enemy: Enemy; position: THREE.Vector3 };
+
 type Enemy = {
   group: THREE.Group;
   humanoid: HumanoidRig;
+  weapon: Weapon;
   walkPhase: number;
   health: number;
   maxHealth: number;
@@ -124,6 +139,9 @@ type Enemy = {
   cooldown: number;
   stun: number;
 };
+
+const ENEMY_MELEE_RANGE = 1.62;
+const ENEMY_AGGRO_RANGE = 46;
 
 type Pickup = {
   group: THREE.Group;
@@ -382,7 +400,7 @@ hud.innerHTML = `
 
   <div class="minimap-panel hidden" data-minimap-panel>
     <span class="minimap-panel__label">Map</span>
-    <canvas class="minimap-panel__canvas" data-minimap width="96" height="96" aria-label="Arena map"></canvas>
+    <canvas class="minimap-panel__canvas" data-minimap width="168" height="168" aria-label="Arena map"></canvas>
   </div>
 
   <div class="center-message hidden" data-message></div>
@@ -618,6 +636,26 @@ applyTerrainTextureAnisotropy(renderer);
 applyConiferTextureAnisotropy(renderer);
 world.add(arenaTerrain.mesh);
 const lootTowers: LootTower[] = createLootTowers(world);
+const arenaBuildings: ArenaBuilding[] = createArenaBuildings(
+  world,
+  lootTowers.map((tower) => ({
+    x: tower.root.position.x,
+    z: tower.root.position.z,
+  })),
+);
+const minimapStructures = [
+  ...lootTowers.map((tower) => ({
+    x: tower.root.position.x,
+    z: tower.root.position.z,
+    kind: "tower" as const,
+  })),
+  ...arenaBuildings.map((building) => ({
+    x: building.x,
+    z: building.z,
+    kind: "building" as const,
+    buildingKind: building.kind,
+  })),
+];
 const towerLootPosition = new THREE.Vector3();
 const towerCollisionScratch = new THREE.Vector2();
 const backdropScenery = createBackdropScenery();
@@ -1034,6 +1072,7 @@ function createEnemy(x: number, z: number, scale = 1): Enemy {
   return {
     group,
     humanoid,
+    weapon,
     walkPhase: Math.random() * Math.PI * 2,
     health: 80 + scale * 20,
     maxHealth: 80 + scale * 20,
@@ -1174,8 +1213,8 @@ function spawnMatch(): void {
 
   snapToGround(player);
 
-  for (let index = 0; index < 6; index += 1) {
-    const angle = (index / 6) * Math.PI * 2 + Math.random() * 0.35;
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index / 8) * Math.PI * 2 + Math.random() * 0.35;
     const radius = 24 + Math.random() * (ARENA_RADIUS * 0.55);
     enemies.push(
       createEnemy(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.94 + Math.random() * 0.18),
@@ -1296,20 +1335,23 @@ function applyPlayerDamage(amount: number): void {
   }
 }
 
-function removeEnemy(enemy: Enemy): void {
+function removeEnemy(enemy: Enemy, killedByPlayer = true): void {
   const index = enemies.indexOf(enemy);
   if (index >= 0) {
     enemies.splice(index, 1);
   }
   enemiesGroup.remove(enemy.group);
-  score += 1;
-  const reward = 28 + Math.floor(Math.random() * 14);
-  session.shards += reward;
-  hudCache.shards = -1;
-  const mods = playerBuffs.getModifiers();
-  if (mods.healOnKill > 0) {
-    playerHealth = Math.min(100, playerHealth + mods.healOnKill);
-    hudCache.health = -1;
+
+  if (killedByPlayer) {
+    score += 1;
+    const reward = 28 + Math.floor(Math.random() * 14);
+    session.shards += reward;
+    hudCache.shards = -1;
+    const mods = playerBuffs.getModifiers();
+    if (mods.healOnKill > 0) {
+      playerHealth = Math.min(100, playerHealth + mods.healOnKill);
+      hudCache.health = -1;
+    }
   }
 
   if (Math.random() > 0.48) {
@@ -1471,6 +1513,12 @@ function updateMovement(delta: number): void {
     player.position.z,
     towerCollisionScratch,
   );
+  resolveBuildingCollision(
+    arenaBuildings,
+    towerCollisionScratch.x,
+    towerCollisionScratch.y,
+    towerCollisionScratch,
+  );
   player.position.x = towerCollisionScratch.x;
   player.position.z = towerCollisionScratch.y;
 
@@ -1552,6 +1600,52 @@ function updateCamera(delta: number): void {
   camera.lookAt(cameraTarget);
 }
 
+function pickEnemyTarget(attacker: Enemy): EnemyCombatTarget {
+  let nearestDistance = attacker.group.position.distanceTo(player.position);
+  let target: EnemyCombatTarget = { kind: "player", position: player.position };
+
+  for (const other of enemies) {
+    if (other === attacker) {
+      continue;
+    }
+    const distance = attacker.group.position.distanceTo(other.group.position);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      target = {
+        kind: "enemy",
+        enemy: other,
+        position: other.group.position,
+      };
+    }
+  }
+
+  return target;
+}
+
+function applyEnemyMeleeHit(attacker: Enemy, target: EnemyCombatTarget): void {
+  const damage = attacker.weapon.damage * 0.58;
+
+  if (target.kind === "player") {
+    applyPlayerDamage(damage);
+    return;
+  }
+
+  target.enemy.health -= damage;
+  target.enemy.stun = 0.18;
+  target.enemy.group.position.addScaledVector(
+    tempVector
+      .copy(target.enemy.group.position)
+      .sub(attacker.group.position)
+      .setY(0)
+      .normalize(),
+    attacker.weapon.knockback * 0.05,
+  );
+
+  if (target.enemy.health <= 0) {
+    removeEnemy(target.enemy, false);
+  }
+}
+
 function updateEnemies(
   delta: number,
   tuning: PerformanceTuning,
@@ -1560,25 +1654,31 @@ function updateEnemies(
     enemy.cooldown = Math.max(0, enemy.cooldown - delta);
     enemy.stun = Math.max(0, enemy.stun - delta);
 
+    const combatTarget = pickEnemyTarget(enemy);
     const distToPlayer = enemy.group.position.distanceTo(player.position);
-    if (distToPlayer > ENEMY_UPDATE_NEAR && tickFrame % tuning.enemyFarSkipInterval !== 0) {
+    const distToTarget = enemy.group.position.distanceTo(combatTarget.position);
+    if (
+      distToTarget > ENEMY_AGGRO_RANGE &&
+      distToPlayer > ENEMY_UPDATE_NEAR &&
+      tickFrame % tuning.enemyFarSkipInterval !== 0
+    ) {
       continue;
     }
 
-    const toPlayer = tempVector.copy(player.position).sub(enemy.group.position);
-    toPlayer.y = 0;
-    const distance = toPlayer.length();
-    const direction = distance > 0.001 ? toPlayer.normalize() : tempVector.set(0, 0, 1);
+    const toTarget = tempVector.copy(combatTarget.position).sub(enemy.group.position);
+    toTarget.y = 0;
+    const distance = toTarget.length();
+    const direction = distance > 0.001 ? toTarget.normalize() : tempVector.set(0, 0, 1);
     enemy.group.rotation.y = Math.atan2(direction.x, direction.z);
 
     let moveSpeed = 0;
     if (enemy.stun <= 0) {
-      if (distance > 1.55) {
+      if (distance > ENEMY_MELEE_RANGE) {
         enemy.group.position.addScaledVector(direction, enemy.speed * delta);
         moveSpeed = enemy.speed;
       } else if (enemy.cooldown <= 0) {
-        applyPlayerDamage(11);
-        enemy.cooldown = 0.9 + Math.random() * 0.4;
+        applyEnemyMeleeHit(enemy, combatTarget);
+        enemy.cooldown = enemy.weapon.cooldown * (0.82 + Math.random() * 0.35);
       }
     }
 
@@ -1589,12 +1689,21 @@ function updateEnemies(
       moveSpeed = enemy.speed;
     }
 
+    pushEnemyAwayFromBuildings(
+      arenaBuildings,
+      enemy.group.position.x,
+      enemy.group.position.z,
+      towerCollisionScratch,
+    );
+    enemy.group.position.x = towerCollisionScratch.x;
+    enemy.group.position.z = towerCollisionScratch.y;
+
     snapToGround(enemy.group);
 
-    if (distToPlayer < 48 && tickFrame % tuning.enemyAnimInterval === 0) {
+    if (distToTarget < 48 && tickFrame % tuning.enemyAnimInterval === 0) {
       enemy.walkPhase += delta * (3.8 + moveSpeed * 0.5) * tuning.enemyAnimInterval;
       const attackSwing =
-        distance < 1.75 && enemy.cooldown > 0.45 ? 1 : 0;
+        distance < ENEMY_MELEE_RANGE + 0.12 && enemy.cooldown > 0.45 ? 1 : 0;
       animateHumanoid(enemy.humanoid, moveSpeed, enemy.walkPhase, attackSwing);
     }
   }
@@ -1746,6 +1855,7 @@ function updateMinimap(): void {
       x: enemy.group.position.x,
       z: enemy.group.position.z,
     })),
+    structures: minimapStructures,
     moveTargetX: moveTarget.x,
     moveTargetZ: moveTarget.z,
     hasMoveTarget,

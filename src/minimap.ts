@@ -1,18 +1,27 @@
 import * as THREE from "three";
 import { ARENA_RADIUS, sampleTerrainHeight } from "./terrain";
 
+export type MinimapMarker = {
+  x: number;
+  z: number;
+  kind: "tower" | "building";
+  buildingKind?: "cabin" | "bunker" | "shed" | "ruin";
+};
+
 export type MinimapSnapshot = {
   playerX: number;
   playerZ: number;
   playerYaw: number;
   stormRadius: number;
   enemies: ReadonlyArray<{ x: number; z: number }>;
+  structures: ReadonlyArray<MinimapMarker>;
   moveTargetX: number;
   moveTargetZ: number;
   hasMoveTarget: boolean;
 };
 
-const CANVAS_SIZE = 96;
+export const MINIMAP_CANVAS_SIZE = 168;
+const CANVAS_SIZE = MINIMAP_CANVAS_SIZE;
 
 function worldToMap(
   x: number,
@@ -136,11 +145,33 @@ export class ArenaMinimap {
       ctx.fill();
     }
 
+    for (const structure of snapshot.structures) {
+      const point = worldToMap(structure.x, structure.z, size, this.arenaRadius);
+      if (structure.kind === "tower") {
+        ctx.fillStyle = "rgba(255, 196, 96, 0.95)";
+        ctx.fillRect(point.px - 3.5, point.py - 3.5, 7, 7);
+        ctx.strokeStyle = "rgba(40, 24, 8, 0.85)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(point.px - 3.5, point.py - 3.5, 7, 7);
+      } else {
+        const colors: Record<string, string> = {
+          cabin: "#8a6a48",
+          bunker: "#7a8088",
+          shed: "#6a7480",
+          ruin: "#5a6068",
+        };
+        ctx.fillStyle = colors[structure.buildingKind ?? "cabin"] ?? "#6a7078";
+        ctx.beginPath();
+        ctx.arc(point.px, point.py, 2.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     for (const enemy of snapshot.enemies) {
       const point = worldToMap(enemy.x, enemy.z, size, this.arenaRadius);
       ctx.fillStyle = "#ff5a6a";
       ctx.beginPath();
-      ctx.arc(point.px, point.py, 2.5, 0, Math.PI * 2);
+      ctx.arc(point.px, point.py, 3, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -152,10 +183,10 @@ export class ArenaMinimap {
     ctx.strokeStyle = "#0a2838";
     ctx.lineWidth = 1.25;
     ctx.beginPath();
-    ctx.moveTo(0, -6);
-    ctx.lineTo(4.5, 5);
-    ctx.lineTo(0, 3);
-    ctx.lineTo(-4.5, 5);
+    ctx.moveTo(0, -8);
+    ctx.lineTo(5.5, 6);
+    ctx.lineTo(0, 3.5);
+    ctx.lineTo(-5.5, 6);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
