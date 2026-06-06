@@ -157,6 +157,7 @@ let health = 100;
 let coins = 50;
 let wave = 1;
 let spawnTimer = 0;
+let waveStartedAt = 0;
 let fantasyMoneyValue = Number(localStorage.getItem(storageKeys.money) ?? 0) || 0;
 let equippedFantasyLevel = 1;
 let camX = 0;
@@ -167,6 +168,7 @@ let draggingGuy: Guy | null = null;
 let dragRect: { x: number; y: number; w: number; h: number } | null = null;
 let inShelter = false;
 let shelterStartedAt = 0;
+let fantasyGraceUntil = 0;
 let musicEnabled = true;
 let audioContext: AudioContext | null = null;
 let musicTimer = 0;
@@ -618,8 +620,9 @@ function updateNormal(now: number, delta: number): void {
   if (zombies.length < Math.min(3 + wave, 16) && Math.random() < 0.006 + wave * 0.0005) {
     zombies.push(makeZombie(gameCanvas.width + 50, 80 + Math.random() * Math.max(140, gameCanvas.height - 160), false));
   }
-  if (now > 15000 + wave * 11500 && zombies.length < 4) {
+  if (now - waveStartedAt > 18000 && zombies.length < 4) {
     wave += 1;
+    waveStartedAt = now;
     coins += 15 + wave * 2;
     addFloatText(`Wave ${wave}`, gameCanvas.width / 2, 130, "#86efac");
   }
@@ -780,6 +783,10 @@ function updateFantasy(now: number, delta: number): void {
       if (entity.id === bullet.ownerId || dist(bullet.x, bullet.y, entity.x, entity.y) > entity.radius) {
         continue;
       }
+      if (entity.id === "player" && now < fantasyGraceUntil) {
+        hit = true;
+        break;
+      }
       entity.hp -= bullet.damage;
       hit = true;
       if (entity.hp <= 0) {
@@ -844,6 +851,7 @@ function startNormal(): void {
   coins = 50;
   wave = 1;
   spawnTimer = 0;
+  waveStartedAt = performance.now();
   camX = 0;
   camY = 0;
   const first = getBuySpawnPoint();
@@ -873,6 +881,8 @@ function launchFantasy(): void {
   show(leaveFantasyBtn);
   player = makeGuy(shelter.x, shelter.y - shelter.radius - 100, equippedFantasyLevel, false, "player");
   fantasyEntities.push(player);
+  fantasyGraceUntil = performance.now() + 4500;
+  addFloatText("Spawn protection", player.x, player.y - 45, "#86efac", true);
   dragon = makeGuy(dungeon.x + dungeon.w / 2, dungeon.y + dungeon.h / 2, 30, true, "dragon");
   dragon.hp = 15000;
   dragon.maxHp = 15000;
@@ -885,7 +895,11 @@ function launchFantasy(): void {
     do {
       x = 120 + Math.random() * (arenaSize - 240);
       y = 120 + Math.random() * (arenaSize - 240);
-    } while (dist(x, y, shelter.x, shelter.y) < shelter.radius + 80);
+    } while (
+      dist(x, y, shelter.x, shelter.y) < shelter.radius + 650 ||
+      dist(x, y, player.x, player.y) < 800 ||
+      isInDungeon(x, y)
+    );
     fantasyEntities.push(makeGuy(x, y, clamp(equippedFantasyLevel + Math.floor(Math.random() * 7) - 3, 1, 30), true));
   }
   updateUI();
