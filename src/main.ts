@@ -27,7 +27,19 @@ import {
   type RenderQuality,
 } from "./performance";
 import { createBackdropScenery } from "./scenery";
-import { ARENA_RADIUS, createArenaTerrain, sampleTerrainHeight } from "./terrain";
+import {
+  createLootTowers,
+  findNearestTower,
+  getTowerLootWorldPosition,
+  type LootTower,
+} from "./lootTowers";
+import {
+  ARENA_RADIUS,
+  createArenaTerrain,
+  sampleTerrainHeight,
+  STORM_MIN_RADIUS,
+  STORM_START_RADIUS,
+} from "./terrain";
 import { applyTerrainTextureAnisotropy } from "./terrainTextures";
 import {
   addWeaponToInventory,
@@ -212,6 +224,19 @@ const gameCursor = document.createElement("div");
 gameCursor.className = "game-cursor hidden";
 gameCursor.setAttribute("aria-hidden", "true");
 app.appendChild(gameCursor);
+
+const aimReticle = document.createElement("div");
+aimReticle.className = "aim-reticle hidden";
+aimReticle.setAttribute("aria-hidden", "true");
+aimReticle.innerHTML = `
+  <span class="aim-reticle__ring"></span>
+  <span class="aim-reticle__tick aim-reticle__tick--n"></span>
+  <span class="aim-reticle__tick aim-reticle__tick--s"></span>
+  <span class="aim-reticle__tick aim-reticle__tick--e"></span>
+  <span class="aim-reticle__tick aim-reticle__tick--w"></span>
+  <span class="aim-reticle__dot"></span>
+`;
+app.appendChild(aimReticle);
 
 const horizonColor = addSkyDome(scene);
 scene.background = horizonColor.clone();
@@ -561,6 +586,8 @@ const weaponBladeMaterials = WEAPONS.map(
 const arenaTerrain = createArenaTerrain();
 applyTerrainTextureAnisotropy(renderer);
 world.add(arenaTerrain.mesh);
+const lootTowers: LootTower[] = createLootTowers(world);
+const towerLootPosition = new THREE.Vector3();
 const backdropScenery = createBackdropScenery();
 backdropScenery.visible = false;
 scene.add(backdropScenery);
@@ -630,7 +657,7 @@ let isGrounded = true;
 const JUMP_VELOCITY = 8.6;
 const GRAVITY = 27;
 let invulnerable = 0;
-let stormRadius = 78;
+let stormRadius = STORM_START_RADIUS;
 let stormTimer = 0;
 let cameraYaw = Math.PI;
 let cameraPitch = 0.48;
@@ -1018,14 +1045,14 @@ function createPickup(weapon: Weapon, x: number, z: number): Pickup {
 }
 
 function addProps(): void {
-  const rockCount = 3;
+  const rockCount = 8;
   const rocks = new THREE.InstancedMesh(sharedGeometries.rock, stoneMaterial, rockCount);
   rocks.castShadow = true;
   rocks.receiveShadow = true;
 
   for (let index = 0; index < rockCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
-    const radius = 28 + Math.random() * 54;
+    const radius = 36 + Math.random() * (ARENA_RADIUS * 0.62);
     const size = 0.55 + Math.random() * 1.2;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
@@ -1039,7 +1066,7 @@ function addProps(): void {
   rocks.instanceMatrix.needsUpdate = true;
   props.add(rocks);
 
-  const treeCount = 6;
+  const treeCount = 10;
   const trunks = new THREE.InstancedMesh(
     sharedGeometries.treeTrunk,
     treeTrunkMaterial,
@@ -1055,7 +1082,7 @@ function addProps(): void {
 
   for (let index = 0; index < treeCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
-    const radius = 30 + Math.random() * 48;
+    const radius = 34 + Math.random() * (ARENA_RADIUS * 0.58);
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
     const scale = 0.8 + Math.random() * 0.35;
@@ -1098,7 +1125,7 @@ function spawnMatch(): void {
   verticalVelocity = 0;
   isGrounded = true;
   invulnerable = 0;
-  stormRadius = 78;
+  stormRadius = STORM_START_RADIUS;
   stormTimer = 0;
   nearestPickup = null;
   cameraShakeDecay = 0;
@@ -1111,19 +1138,43 @@ function spawnMatch(): void {
 
   snapToGround(player);
 
-  for (let index = 0; index < 3; index += 1) {
-    const angle = (index / 3) * Math.PI * 2 + Math.random() * 0.35;
-    const radius = 19 + Math.random() * 36;
+  for (let index = 0; index < 6; index += 1) {
+    const angle = (index / 6) * Math.PI * 2 + Math.random() * 0.35;
+    const radius = 24 + Math.random() * (ARENA_RADIUS * 0.55);
     enemies.push(
       createEnemy(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.94 + Math.random() * 0.18),
     );
   }
 
-  for (let index = 0; index < 4; index += 1) {
-    const weapon = WEAPONS[1 + Math.floor(Math.random() * (WEAPONS.length - 1))];
+  for (let index = 0; index < 3; index += 1) {
+    const weapon = WEAPONS[1 + Math.floor(Math.random() * 4)];
     const angle = Math.random() * Math.PI * 2;
-    const radius = 8 + Math.random() * 58;
+    const radius = 12 + Math.random() * (ARENA_RADIUS * 0.65);
     createPickup(weapon, Math.cos(angle) * radius, Math.sin(angle) * radius);
+  }
+
+  spawnTowerLoot();
+}
+
+function spawnTowerLoot(): void {
+  for (const tower of lootTowers) {
+    tower.looted = false;
+    getTowerLootWorldPosition(tower, towerLootPosition);
+    createPickup(tower.weapon, towerLootPosition.x, towerLootPosition.z);
+  }
+}
+
+function markTowerLootedIfNeeded(pickup: Pickup): void {
+  for (const tower of lootTowers) {
+    if (tower.looted || tower.weapon !== pickup.weapon) {
+      continue;
+    }
+    const dx = tower.root.position.x - pickup.group.position.x;
+    const dz = tower.root.position.z - pickup.group.position.z;
+    if (Math.hypot(dx, dz) < 6) {
+      tower.looted = true;
+      return;
+    }
   }
 }
 
@@ -1148,6 +1199,7 @@ function setState(nextState: GameState): void {
     resetGraphicsSyncState();
   }
   gameCursor.classList.toggle("hidden", !inMatch);
+  aimReticle.classList.toggle("hidden", !inMatch);
   releaseGamePointerLock();
 
   startPanel.classList.toggle("hidden", !showStart);
@@ -1327,6 +1379,7 @@ function pickUpNearest(): void {
   } else {
     equipWeapon(pickupWeapon);
   }
+  markTowerLootedIfNeeded(nearestPickup);
   pickupsGroup.remove(nearestPickup.group);
   const index = pickups.indexOf(nearestPickup);
   if (index >= 0) {
@@ -1516,8 +1569,19 @@ function updatePickups(delta: number): void {
     }
   }
 
+  const nearbyTower = findNearestTower(
+    lootTowers,
+    player.position.x,
+    player.position.z,
+    18,
+  );
+
   if (nearestPickup) {
-    message.textContent = `Press E to pick up ${nearestPickup.weapon.name}`;
+    const towerHint = nearbyTower && !nearbyTower.looted ? " · tower loot" : "";
+    message.textContent = `Press E to pick up ${nearestPickup.weapon.name}${towerHint}`;
+    message.classList.remove("hidden");
+  } else if (nearbyTower) {
+    message.textContent = `Loot tower ahead — climb for ${nearbyTower.weapon.name}`;
     message.classList.remove("hidden");
   } else if (state === "playing") {
     if (isAttackKeyHeld && attackChargeTime >= ATTACK_CHARGE_TIME) {
@@ -1533,7 +1597,7 @@ function updatePickups(delta: number): void {
 
 function updateStorm(delta: number): void {
   stormTimer += delta;
-  stormRadius = Math.max(22, 78 - stormTimer * 0.18);
+  stormRadius = Math.max(STORM_MIN_RADIUS, STORM_START_RADIUS - stormTimer * 0.16);
   stormRing.scale.setScalar(stormRadius);
 
   const distance = Math.hypot(player.position.x, player.position.z);
@@ -1854,7 +1918,9 @@ function syncGameCursorVisibility(clientX: number, clientY: number): void {
     clientX <= rect.right &&
     clientY >= rect.top &&
     clientY <= rect.bottom;
+  const locked = isPointerLocked();
   gameCursor.classList.toggle("hidden", !inside);
+  gameCursor.classList.toggle("game-cursor--locked", locked);
   if (inside) {
     updateGameCursor(clientX, clientY);
   }

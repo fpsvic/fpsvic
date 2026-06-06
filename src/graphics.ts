@@ -223,11 +223,11 @@ export function setupLighting(scene: THREE.Scene): THREE.DirectionalLight {
   sun.shadow.bias = -0.00015;
   sun.shadow.normalBias = 0.02;
   sun.shadow.camera.near = 4;
-  sun.shadow.camera.far = 140;
-  sun.shadow.camera.left = -72;
-  sun.shadow.camera.right = 72;
-  sun.shadow.camera.top = 72;
-  sun.shadow.camera.bottom = -72;
+  sun.shadow.camera.far = 220;
+  sun.shadow.camera.left = -108;
+  sun.shadow.camera.right = 108;
+  sun.shadow.camera.top = 108;
+  sun.shadow.camera.bottom = -108;
   scene.add(sun);
 
   const fill = new THREE.DirectionalLight(0x9ec8ff, 0.32);
