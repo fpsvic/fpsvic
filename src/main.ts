@@ -740,7 +740,10 @@ function updateFantasy(now: number, delta: number): void {
     if (!bot.isBot || bot.id === "dragon") {
       continue;
     }
-    const enemies = fantasyEntities.filter((entity) => entity !== bot && entity.id !== "dragon");
+    const playerIsSpawnProtected = now < fantasyGraceUntil;
+    const enemies = fantasyEntities.filter(
+      (entity) => entity !== bot && entity.id !== "dragon" && !(entity.id === "player" && playerIsSpawnProtected),
+    );
     const target = enemies.sort((a, b) => dist(bot.x, bot.y, a.x, a.y) - dist(bot.x, bot.y, b.x, b.y))[0];
     if (!target) {
       continue;
