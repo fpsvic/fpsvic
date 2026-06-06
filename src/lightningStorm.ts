@@ -1,8 +1,11 @@
 import * as THREE from "three";
 import { ARENA_RADIUS, sampleTerrainHeight } from "./terrain";
 
+export const LIGHTNING_STORM_CHANCE = 0.08;
 export const LIGHTNING_STRIKE_CHANCE = 0.03;
 export const LIGHTNING_STRIKE_DAMAGE = 50;
+/** Spread the 8% storm-start roll across this many calm seconds (no countdown timer). */
+const STORM_ROLL_WINDOW_SECONDS = 75;
 
 type StrikeFlash = {
   group: THREE.Group;
@@ -113,7 +116,6 @@ export class LightningStormSystem {
   private readonly strikes: StrikeFlash[] = [];
   private stormActive = false;
   private nightBlend = 0;
-  private timeUntilStorm = 55 + Math.random() * 45;
   private stormTimeLeft = 0;
   private nextStrikeIn = 2.5;
   private sunDayIntensity = 1.95;
@@ -153,7 +155,6 @@ export class LightningStormSystem {
   reset(): void {
     this.stormActive = false;
     this.nightBlend = 0;
-    this.timeUntilStorm = 60 + Math.random() * 50;
     this.stormTimeLeft = 0;
     this.nextStrikeIn = 2.5;
     this.clearStrikes();
@@ -162,12 +163,9 @@ export class LightningStormSystem {
 
   update(delta: number, playerX: number, playerZ: number, underShelter: boolean): void {
     if (!this.stormActive) {
-      this.timeUntilStorm -= delta;
       this.nightBlend = THREE.MathUtils.damp(this.nightBlend, 0, 3.5, delta);
       this.applyAtmosphere(this.nightBlend);
-      if (this.timeUntilStorm <= 0) {
-        this.beginStorm();
-      }
+      this.maybeStartStorm(delta);
       this.tickStrikes(delta);
       return;
     }
@@ -184,10 +182,18 @@ export class LightningStormSystem {
 
     if (this.stormTimeLeft <= 0) {
       this.stormActive = false;
-      this.timeUntilStorm = 80 + Math.random() * 70;
     }
 
     this.tickStrikes(delta);
+  }
+
+  /** ~8% chance to start a storm over each STORM_ROLL_WINDOW_SECONDS of calm weather. */
+  private maybeStartStorm(delta: number): void {
+    const chance =
+      1 - Math.pow(1 - LIGHTNING_STORM_CHANCE, delta / STORM_ROLL_WINDOW_SECONDS);
+    if (Math.random() < chance) {
+      this.beginStorm();
+    }
   }
 
   private beginStorm(): void {
