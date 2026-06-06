@@ -884,7 +884,7 @@ function launchFantasy(): void {
   show(leaveFantasyBtn);
   player = makeGuy(shelter.x, shelter.y - shelter.radius - 100, equippedFantasyLevel, false, "player");
   fantasyEntities.push(player);
-  fantasyGraceUntil = performance.now() + 4500;
+  fantasyGraceUntil = performance.now() + 12000;
   addFloatText("Spawn protection", player.x, player.y - 45, "#86efac", true);
   dragon = makeGuy(dungeon.x + dungeon.w / 2, dungeon.y + dungeon.h / 2, 30, true, "dragon");
   dragon.hp = 15000;
