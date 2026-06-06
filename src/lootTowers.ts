@@ -207,6 +207,17 @@ export function isPlayerInsideTower(
   return local.length() < INTERIOR_RADIUS + 0.15;
 }
 
+/** Standing directly under the tower battlements / roof. */
+export function isPlayerUnderTowerRoof(
+  tower: LootTower,
+  worldX: number,
+  worldZ: number,
+): boolean {
+  const dx = worldX - tower.root.position.x;
+  const dz = worldZ - tower.root.position.z;
+  return Math.hypot(dx, dz) < WALL_RADIUS + 0.45;
+}
+
 export function findTowerPlayerIsInside(
   towers: LootTower[],
   worldX: number,

@@ -218,9 +218,19 @@ export function addSkyDome(scene: THREE.Scene): THREE.Color {
   return horizon;
 }
 
-export function setupLighting(scene: THREE.Scene): THREE.DirectionalLight {
-  scene.add(new THREE.AmbientLight(0xa8c8e8, 0.28));
-  scene.add(new THREE.HemisphereLight(0xd8f0ff, 0x5a8a48, 0.78));
+export type SceneLighting = {
+  sun: THREE.DirectionalLight;
+  fill: THREE.DirectionalLight;
+  rim: THREE.DirectionalLight;
+  hemisphere: THREE.HemisphereLight;
+  ambient: THREE.AmbientLight;
+};
+
+export function setupLighting(scene: THREE.Scene): SceneLighting {
+  const ambient = new THREE.AmbientLight(0xa8c8e8, 0.28);
+  const hemisphere = new THREE.HemisphereLight(0xd8f0ff, 0x5a8a48, 0.78);
+  scene.add(ambient);
+  scene.add(hemisphere);
 
   const sun = new THREE.DirectionalLight(0xfff0d0, 1.95);
   sun.position.set(58, 78, 32);
@@ -246,7 +256,7 @@ export function setupLighting(scene: THREE.Scene): THREE.DirectionalLight {
   rim.position.set(-28, 42, 58);
   scene.add(rim);
 
-  return sun;
+  return { sun, fill, rim, hemisphere, ambient };
 }
 
 export function syncSunShadowQuality(sun: THREE.DirectionalLight, size: number): void {

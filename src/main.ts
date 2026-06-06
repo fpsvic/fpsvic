@@ -15,7 +15,12 @@ import {
   setupLighting,
   syncSunShadowQuality,
 } from "./graphics";
+import {
+  LightningStormSystem,
+  LIGHTNING_STRIKE_DAMAGE,
+} from "./lightningStorm";
 import { FortnitePostPipeline, getPostFxQuality } from "./postProcessing";
+import { clearTreeShelters, isPlayerUnderShelter, registerTreeShelter } from "./shelter";
 import { FpsMeter } from "./fpsMeter";
 import { ArenaMinimap } from "./minimap";
 import {
@@ -247,8 +252,35 @@ app.appendChild(aimReticle);
 const horizonColor = addSkyDome(scene);
 scene.background = horizonColor.clone();
 scene.fog = new THREE.FogExp2(horizonColor.getHex(), 0.0032);
-const sunLight = setupLighting(scene);
+const sceneLighting = setupLighting(scene);
+const sunLight = sceneLighting.sun;
 const postPipeline = new FortnitePostPipeline(renderer, scene, camera);
+let lightningScreenFlash = 0;
+
+const lightningStorm = new LightningStormSystem(
+  scene,
+  camera,
+  horizonColor,
+  {
+    sun: sceneLighting.sun,
+    fill: sceneLighting.fill,
+    hemisphere: sceneLighting.hemisphere,
+    ambient: sceneLighting.ambient,
+  },
+  {
+    onPlayerStruck: () => {
+      applyPlayerDamage(LIGHTNING_STRIKE_DAMAGE);
+      lightningScreenFlash = 0.45;
+      cameraShakeDecay = 0.55;
+      message.textContent = "⚡ Lightning strike! −50 HP — stand under a tower or tree!";
+      message.classList.remove("hidden");
+    },
+    onStrikeNearby: () => {
+      lightningScreenFlash = Math.max(lightningScreenFlash, 0.16);
+      cameraShakeDecay = Math.max(cameraShakeDecay, 0.22);
+    },
+  },
+);
 
 const hud = document.createElement("div");
 hud.className = "hud";
@@ -1063,6 +1095,7 @@ function createPickup(
 }
 
 function addProps(): void {
+  clearTreeShelters();
   const rockCount = 8;
   const rocks = new THREE.InstancedMesh(sharedGeometries.rock, stoneMaterial, rockCount);
   rocks.castShadow = true;
@@ -1112,6 +1145,7 @@ function addProps(): void {
     dummy.scale.set(scale, scale, scale);
     dummy.updateMatrix();
     trunks.setMatrixAt(index, dummy.matrix);
+    registerTreeShelter(x, z, 2.35 + scale * 0.8);
 
     dummy.position.set(x, groundY + 1.35 * scale, z);
     dummy.updateMatrix();
@@ -1172,6 +1206,7 @@ function spawnMatch(): void {
   }
 
   spawnTowerLoot();
+  lightningStorm.reset();
 }
 
 function spawnTowerLoot(): void {
@@ -1642,6 +1677,16 @@ function updatePickups(delta: number): void {
   } else if (nearbyTower) {
     message.textContent = `Walk through the doorway to loot ${nearbyTower.weapon.name}`;
     message.classList.remove("hidden");
+  } else if (lightningStorm.isStormActive && state === "playing") {
+    const sheltered = isPlayerUnderShelter(
+      lootTowers,
+      player.position.x,
+      player.position.z,
+    );
+    message.textContent = sheltered
+      ? "⚡ Lightning storm — you are sheltered"
+      : "⚡ Lightning storm — get under a tower or tree!";
+    message.classList.remove("hidden");
   } else if (state === "playing") {
     if (isAttackKeyHeld && attackChargeTime >= ATTACK_CHARGE_TIME) {
       message.textContent = "Charged — release A";
@@ -1798,11 +1843,24 @@ function tick(): void {
     syncShadowRendering(renderer, sunLight, arenaTerrain.mesh, playing);
   }
 
+  if (lightningScreenFlash > 0) {
+    lightningScreenFlash = Math.max(0, lightningScreenFlash - delta * 2.4);
+    renderer.toneMappingExposure = 1.24 + lightningScreenFlash * 2.6;
+  } else {
+    renderer.toneMappingExposure = THREE.MathUtils.lerp(1.24, 0.92, lightningStorm.nightLevel);
+  }
+
   if (playing) {
     updateMovement(delta);
     updateWeapon(delta);
     updateEnemies(delta, tuning);
     updateStorm(delta);
+    lightningStorm.update(
+      delta,
+      player.position.x,
+      player.position.z,
+      isPlayerUnderShelter(lootTowers, player.position.x, player.position.z),
+    );
     if (tickFrame % tuning.pickupFrameInterval === 0) {
       updatePickups(delta);
     }
