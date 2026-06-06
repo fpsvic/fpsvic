@@ -1,23 +1,20 @@
-# Blade Drop Arena
+# Merge Guys
 
-A browser-based 3D melee battle arena prototype built with Vite, TypeScript, and Three.js.
+A browser-based 2D merge defense and fantasy arena prototype built with Vite, TypeScript, and Canvas.
 
 ## Features
 
-- Third-person 3D movement with mouse aiming
-- Melee-only combat with knives, swords, axes, and spears
-- Enemy bots that chase and attack the player
-- Weapon pickups with different damage, range, cooldown, and knockback
-- Shrinking storm ring, health, score, alive count, and win/lose screens
+- Toxic green menu flow with username validation, tutorial, and 24-hour local leaderboard
+- Normal mode base defense with buy buttons, zombie waves, draggable guys, and box merging
+- Fantasy mode shop with persistent bank balance and 30 purchasable fighter levels
+- Fantasy arena with WASD movement, mouse/Z shooting, bots, food pickups, shelter, dragon lair, minimap, and win/lose screens
 
 ## Controls
 
-- `WASD`: Move
-- Mouse: Aim camera
-- Left click: Slash
-- `Space`: Dash
-- `E`: Pick up nearby weapon
-- `R`: Restart after a match
+- Normal mode: drag a guy onto another guy, or drag a box around multiple guys, to merge them
+- Fantasy mode: `WASD` or arrow keys to move
+- Fantasy mode: mouse click or `Z` to shoot
+- Menu buttons: choose mode, open tutorial, view leaderboard, buy fighters, and return home
 
 ## Development
 

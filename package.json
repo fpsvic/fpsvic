@@ -1,7 +1,7 @@
 {
-  "name": "fpsvic",
+  "name": "merge-guys",
   "version": "1.0.0",
-  "description": "A browser-based 3D melee arena battle game prototype.",
+  "description": "A browser-based 2D merge defense and fantasy arena game prototype.",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,11 +19,7 @@
     "url": "https://github.com/fpsvic/fpsvic/issues"
   },
   "homepage": "https://github.com/fpsvic/fpsvic#readme",
-  "dependencies": {
-    "three": "^0.184.0"
-  },
   "devDependencies": {
-    "@types/three": "^0.184.1",
     "typescript": "^6.0.3",
     "vite": "^8.0.14"
   }
