@@ -13,7 +13,9 @@ import {
   configureRenderer,
   createBlobShadowTexture,
   setupLighting,
+  syncSunShadowQuality,
 } from "./graphics";
+import { FortnitePostPipeline, getPostFxQuality } from "./postProcessing";
 import { FpsMeter } from "./fpsMeter";
 import { ArenaMinimap } from "./minimap";
 import {
@@ -196,7 +198,7 @@ const camera = new THREE.PerspectiveCamera(
   58,
   initialViewport.width / initialViewport.height,
   0.1,
-  260,
+  420,
 );
 
 let renderer: THREE.WebGLRenderer;
@@ -240,8 +242,9 @@ app.appendChild(aimReticle);
 
 const horizonColor = addSkyDome(scene);
 scene.background = horizonColor.clone();
-scene.fog = new THREE.FogExp2(horizonColor.getHex(), 0.0058);
+scene.fog = new THREE.FogExp2(horizonColor.getHex(), 0.0032);
 const sunLight = setupLighting(scene);
+const postPipeline = new FortnitePostPipeline(renderer, scene, camera);
 
 const hud = document.createElement("div");
 hud.className = "hud";
@@ -578,8 +581,8 @@ const weaponBladeMaterials = WEAPONS.map(
       roughness: 0.18,
       metalness: 0.88,
       emissive: weapon.color,
-      emissiveIntensity: 0.08,
-      envMapIntensity: 1.05,
+      emissiveIntensity: 0.14,
+      envMapIntensity: 1.22,
     }),
 );
 
@@ -1729,6 +1732,8 @@ function tick(): void {
       quality.pixelRatioCap,
       renderPixelRatio,
     );
+    postPipeline.setQuality(getPostFxQuality(qualityFps));
+    syncSunShadowQuality(sunLight, quality.shadowMapSize);
   }
   const { tuning } = quality;
   const playing = state === "playing";
@@ -1758,7 +1763,7 @@ function tick(): void {
     if (quality.shadowsEnabled && tickFrame % tuning.shadowFrameInterval === 0) {
       renderer.shadowMap.needsUpdate = true;
     }
-    renderer.render(scene, camera);
+    postPipeline.render();
     fpsMeter.endRenderFrame();
     return;
   }
@@ -1767,7 +1772,7 @@ function tick(): void {
   if (quality.shadowsEnabled && tickFrame % tuning.shadowFrameInterval === 0) {
     renderer.shadowMap.needsUpdate = true;
   }
-  renderer.render(scene, camera);
+  postPipeline.render();
   fpsMeter.endRenderFrame();
 }
 
@@ -1776,6 +1781,7 @@ function resize(): void {
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
   renderer.setSize(width, height, false);
+  postPipeline.setSize(width, height);
 }
 
 window.addEventListener("resize", resize);
@@ -2021,7 +2027,8 @@ try {
     }
   }
 
-  renderer.render(scene, camera);
+  postPipeline.setQuality(getPostFxQuality(72));
+  postPipeline.render();
   fpsMeter.endRenderFrame();
   renderer.setAnimationLoop(tick);
   requestAnimationFrame(initRealisticGraphics);

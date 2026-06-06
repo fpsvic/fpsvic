@@ -9,9 +9,9 @@ export function createTerrainSplatMaterial(textures: TerrainTextureSet): THREE.M
     vertexColors: true,
     roughness: 1,
     metalness: 0.02,
-    envMapIntensity: 0.88,
+    envMapIntensity: 1.18,
     normalMap: textures.grass.normal,
-    normalScale: new THREE.Vector2(1.2, 1.2),
+    normalScale: new THREE.Vector2(1.45, 1.45),
     roughnessMap: textures.grass.roughness,
     aoMap: textures.grass.ao,
     aoMapIntensity: 1,
@@ -86,7 +86,7 @@ vec3 sampleTerrainNormal( sampler2D tex, vec2 uv ) {
   float roughGrass = texture2D( grassRough, terrainUv ).r;
   float roughDirt = texture2D( dirtRough, dirtUv ).r;
   float roughRock = texture2D( rockRough, rockUv ).r;
-  roughnessFactor = clamp( ( roughGrass * vColor.r + roughDirt * vColor.g + roughRock * vColor.b ) / wSum, 0.45, 1.0 );
+  roughnessFactor = clamp( ( roughGrass * vColor.r + roughDirt * vColor.g + roughRock * vColor.b ) / wSum, 0.38, 0.92 );
 
   float aoGrass = texture2D( grassAo, terrainUv ).r;
   float aoDirt = texture2D( dirtAo, dirtUv ).r;

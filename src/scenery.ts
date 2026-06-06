@@ -19,12 +19,12 @@ const trunkMaterial = new THREE.MeshStandardMaterial({
   envMapIntensity: 0.45,
 });
 const foliageMaterial = new THREE.MeshStandardMaterial({
-  color: 0x2f5c38,
-  roughness: 0.82,
+  color: 0x3d9a52,
+  roughness: 0.72,
   metalness: 0.02,
-  emissive: new THREE.Color(0x142818),
-  emissiveIntensity: 0.06,
-  envMapIntensity: 0.42,
+  emissive: new THREE.Color(0x1a4028),
+  emissiveIntensity: 0.12,
+  envMapIntensity: 0.72,
 });
 
 const dummy = new THREE.Object3D();

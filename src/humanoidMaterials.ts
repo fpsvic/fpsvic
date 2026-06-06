@@ -238,7 +238,9 @@ export function createHumanoidPalette(options: HumanoidPaletteOptions): Humanoid
     sheenColor: new THREE.Color(0xffe8dc),
     emissive: new THREE.Color(0x4a2018),
     emissiveIntensity: 0.055,
-    envMapIntensity: 0.78,
+    clearcoat: 0.08,
+    clearcoatRoughness: 0.4,
+    envMapIntensity: 1.05,
   });
 
   const shirt = new THREE.MeshPhysicalMaterial({
@@ -251,7 +253,7 @@ export function createHumanoidPalette(options: HumanoidPaletteOptions): Humanoid
     sheen: 0.22,
     sheenRoughness: 0.9,
     sheenColor: new THREE.Color(0xc8d4e0),
-    envMapIntensity: 0.68,
+    envMapIntensity: 0.92,
   });
 
   const pants = new THREE.MeshPhysicalMaterial({
@@ -261,7 +263,7 @@ export function createHumanoidPalette(options: HumanoidPaletteOptions): Humanoid
     normalScale: new THREE.Vector2(0.48, 0.48),
     roughness: 0.9,
     metalness: 0.02,
-    envMapIntensity: 0.55,
+    envMapIntensity: 0.78,
   });
 
   const boots = new THREE.MeshPhysicalMaterial({
@@ -272,7 +274,7 @@ export function createHumanoidPalette(options: HumanoidPaletteOptions): Humanoid
     normalScale: new THREE.Vector2(0.4, 0.4),
     roughness: 0.72,
     metalness: 0.08,
-    envMapIntensity: 0.62,
+    envMapIntensity: 0.88,
   });
 
   const hairColor = options.hairColor ?? 0x2a2018;
