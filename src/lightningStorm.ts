@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { ARENA_RADIUS, sampleTerrainHeight } from "./terrain";
 
-export const LIGHTNING_STRIKE_CHANCE = 0.1;
+export const LIGHTNING_STORM_CHANCE = 0.1;
+export const LIGHTNING_STRIKE_CHANCE = 0.03;
 export const LIGHTNING_STRIKE_DAMAGE = 50;
 
 type StrikeFlash = {
@@ -166,7 +167,11 @@ export class LightningStormSystem {
       this.nightBlend = THREE.MathUtils.damp(this.nightBlend, 0, 3.5, delta);
       this.applyAtmosphere(this.nightBlend);
       if (this.timeUntilStorm <= 0) {
-        this.beginStorm();
+        if (Math.random() < LIGHTNING_STORM_CHANCE) {
+          this.beginStorm();
+        } else {
+          this.scheduleNextStormWindow();
+        }
       }
       this.tickStrikes(delta);
       return;
@@ -184,10 +189,14 @@ export class LightningStormSystem {
 
     if (this.stormTimeLeft <= 0) {
       this.stormActive = false;
-      this.timeUntilStorm = 80 + Math.random() * 70;
+      this.scheduleNextStormWindow();
     }
 
     this.tickStrikes(delta);
+  }
+
+  private scheduleNextStormWindow(): void {
+    this.timeUntilStorm = 55 + Math.random() * 45;
   }
 
   private beginStorm(): void {
