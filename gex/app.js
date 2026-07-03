@@ -531,7 +531,7 @@ function renderTiles(m) {
   if (volm && volm.ok) {
     defs.push({
       label: 'VIX proxy', value: volm.vix30.toFixed(1),
-      hint: vixQuote ? `VIX ${vixQuote.vix.toFixed(2)} (delayed)` : '30d chain-implied vol',
+      hint: vixQuote ? `VIX ${vixQuote.vix.toFixed(2)} (${vixQuote.live ? 'live' : 'delayed'})` : '30d chain-implied vol',
     });
     defs.push({
       label: 'Vol premium',
@@ -743,7 +743,7 @@ function renderVolCard() {
 
   const legendDefs = [{ color: 'var(--accent)', text: 'Implied vol by expiry' }];
   if (volm.rv != null) legendDefs.push({ color: 'var(--text-muted)', text: 'Realized 21d' });
-  if (vixQuote) legendDefs.push({ color: 'var(--neg)', text: 'VIX (delayed)' });
+  if (vixQuote) legendDefs.push({ color: 'var(--neg)', text: `VIX (${vixQuote.live ? 'live' : 'delayed'})` });
   for (const l of legendDefs) {
     const span = el('span', {});
     span.append(el('span', { className: 'key', style: `background:${l.color}` }));
@@ -1054,7 +1054,7 @@ async function loadAux(sym) {
       try {
         const j = await fetchJson('https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json');
         const v = Number(j?.data?.current_price ?? NaN);
-        if (isFinite(v) && v > 0) vq = { vix: v, asof: j?.data?.last_trade_time || null };
+        if (isFinite(v) && v > 0) vq = { vix: v, asof: j?.data?.last_trade_time || null, live: false };
       } catch { /* no reference quote */ }
     }
   })();
