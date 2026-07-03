@@ -23,17 +23,17 @@ prefix; equities/ETFs like `SPY.json` don't). Each response contains the full op
 chain — every strike and expiry with bid/ask, open interest, volume, IV, and greeks —
 delayed about 15 minutes. `server.js` proxies and caches it for 60 seconds.
 
-Two more free CBOE endpoints feed the volatility panel:
-
-- `charts/historical/{symbol}.json` — daily OHLC back to 1975, used for the 21-day
-  realized vol (proxied as `/api/history`, trimmed to the last 80 sessions).
-- `quotes/_VIX.json` — a ~500-byte delayed VIX spot, shown next to the chain-derived
-  proxy as a sanity reference (proxied as `/api/vix`).
+Two more endpoints feed the volatility panel — `/api/history` (daily closes for the
+21-day realized vol) and `/api/vix` (the VIX spot shown next to the chain-derived
+proxy). With a Tradier token these come from Tradier (live); without one they come
+from CBOE's free `charts/historical/{symbol}.json` and `quotes/_VIX.json`.
 
 Works with SPX, SPY, QQQ, IWM, NDX, RUT, VIX, and any US ticker with listed options.
 
-**Tradier (optional).** If you have a Tradier account, the same dashboard can pull from
-Tradier's market-data API instead. Put your token in a `.env` file:
+**Tradier (recommended).** With a Tradier account token, the dashboard sources
+*everything* from Tradier — real-time chains and spot, daily history, and a live VIX
+quote — with CBOE kept as the automatic fallback so an outage or expired token
+degrades to delayed data instead of no data. Put your token in a `.env` file:
 
 ```bash
 cp gex/.env.example gex/.env   # then edit gex/.env and paste your token
@@ -49,7 +49,7 @@ gitignored, and real environment variables override it.
 - Greeks and IV come from ORATS and refresh roughly hourly — fine for GEX, since open
   interest (the other big input) only updates daily anyway.
 - Big chains like SPX have dozens of expirations, each a separate API call; the server
-  pulls 12 by default (`TRADIER_MAX_EXPIRIES=20` to raise it) to stay well inside
+  pulls 20 by default (`TRADIER_MAX_EXPIRIES` to change it) to stay well inside
   Tradier's rate limits — the nearest few for 0DTE/weekly exposure, then dates nearest
   fixed horizons (10–180d) so the 30-day VIX proxy and term structure stay honest even
   on daily-expiry chains. Responses are normalized to the CBOE payload shape, so the

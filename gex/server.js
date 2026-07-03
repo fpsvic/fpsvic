@@ -53,7 +53,7 @@ const TRADIER_TOKEN = process.env.TRADIER_TOKEN || '';
 const TRADIER_BASE = process.env.TRADIER_SANDBOX
   ? 'https://sandbox.tradier.com/v1'
   : 'https://api.tradier.com/v1';
-const TRADIER_MAX_EXPIRIES = Number(process.env.TRADIER_MAX_EXPIRIES || 12);
+const TRADIER_MAX_EXPIRIES = Number(process.env.TRADIER_MAX_EXPIRIES || 20);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -115,14 +115,14 @@ async function fetchHistoryCboe(symbol) {
   return JSON.stringify({ symbol, _source: 'CBOE historical', days });
 }
 
-// Lightweight VIX spot (delayed) for cross-checking the chain-derived proxy.
-async function fetchVixQuote() {
+// Lightweight VIX spot (delayed ~15 min) for cross-checking the chain-derived proxy.
+async function fetchVixQuoteCboe() {
   const res = await fetch('https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json', { headers: CBOE_HEADERS });
   if (!res.ok) throw new Error(`CBOE HTTP ${res.status} for _VIX quote`);
   const json = await res.json();
   const vix = Number(json?.data?.current_price ?? NaN);
   if (!isFinite(vix) || vix <= 0) throw new Error('no VIX level in CBOE quote payload');
-  return JSON.stringify({ vix, asof: json?.data?.last_trade_time || null });
+  return JSON.stringify({ vix, asof: json?.data?.last_trade_time || null, live: false, _source: 'CBOE delayed' });
 }
 
 // ---------------------------------------------------------------- tradier
@@ -159,6 +159,11 @@ export function pickExpirations(dates, max, now = Date.now()) {
       if (dist < bestDist) { bestDist = dist; best = d; }
     }
     if (best) chosen.add(best);
+  }
+  // spend any leftover budget densifying the front (nearest unchosen dates)
+  for (const d of dates) {
+    if (chosen.size >= max) break;
+    chosen.add(d);
   }
   return dates.filter((d) => chosen.has(d)); // chronological
 }
@@ -207,6 +212,17 @@ export async function fetchChainTradier(symbol, fetchImpl = fetch) {
     _source: `Tradier (${dates.length} expirations, front + horizon spread)`,
     data: { symbol, current_price: spot, options },
   });
+}
+
+// Real-time VIX quote from Tradier (index symbols work on production tokens).
+async function fetchVixQuoteTradier() {
+  if (!TRADIER_TOKEN) throw new Error('TRADIER_TOKEN is not set');
+  const json = await tradierGet('/markets/quotes', { symbols: 'VIX' });
+  const q = asArray(json?.quotes?.quote)[0];
+  const vix = Number(q?.last ?? q?.close ?? NaN);
+  if (!isFinite(vix) || vix <= 0) throw new Error('Tradier returned no VIX quote');
+  const asof = isFinite(q?.trade_date) && q.trade_date > 0 ? new Date(q.trade_date).toISOString() : null;
+  return JSON.stringify({ vix, asof, live: true, _source: 'Tradier' });
 }
 
 // Daily closes from Tradier, normalized to the same shape as fetchHistoryCboe.
@@ -435,16 +451,32 @@ async function fetchChain(symbol, requestedSource) {
   throw new Error(errors.join(' · '));
 }
 
-// CBOE history is keyless and covers indexes and equities alike, so prefer it
-// regardless of the chain source; Tradier is the fallback when a token exists.
+// Tradier first when a token exists (live data, one consistent source);
+// CBOE stays as the free keyless fallback so an outage or a dead token
+// degrades to delayed data instead of no data.
 function fetchHistory(symbol) {
   return cached(`history:${symbol}`, HISTORY_CACHE_MS, async () => {
-    try {
-      return await fetchHistoryCboe(symbol);
-    } catch (err) {
-      if (!TRADIER_TOKEN) throw err;
-      return fetchHistoryTradier(symbol);
+    if (TRADIER_TOKEN) {
+      try {
+        return await fetchHistoryTradier(symbol);
+      } catch (err) {
+        console.error(`[gex] history for ${symbol} via tradier failed: ${err.message}; falling back to CBOE`);
+      }
     }
+    return fetchHistoryCboe(symbol);
+  });
+}
+
+function fetchVix() {
+  return cached('vix', CACHE_MS, async () => {
+    if (TRADIER_TOKEN) {
+      try {
+        return await fetchVixQuoteTradier();
+      } catch (err) {
+        console.error(`[gex] VIX quote via tradier failed: ${err.message}; falling back to CBOE`);
+      }
+    }
+    return fetchVixQuoteCboe();
   });
 }
 
@@ -493,7 +525,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = url.pathname === '/api/chain' ? await fetchChain(symbol, source)
         : url.pathname === '/api/history' ? await fetchHistory(symbol)
-        : await cached('vix', CACHE_MS, fetchVixQuote);
+        : await fetchVix();
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return res.end(body);
     } catch (err) {
