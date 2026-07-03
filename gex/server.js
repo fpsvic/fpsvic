@@ -39,6 +39,8 @@ try {
 
 const PORT = Number(process.env.PORT || 8787);
 const CACHE_MS = 60_000;
+const HISTORY_CACHE_MS = 30 * 60_000;
+const HISTORY_DAYS = 80; // enough for a 21-day realized-vol window with margin
 
 const CBOE = 'https://cdn.cboe.com/api/global/delayed_quotes/options/';
 
@@ -55,22 +57,31 @@ const MIME = {
   '.json': 'application/json; charset=utf-8',
 };
 
-const cache = new Map(); // `${source}:${symbol}` -> {at, body}
+const cache = new Map(); // key -> {at, ttl, body}
+
+function cached(key, ttl, fill) {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < hit.ttl) return hit.body;
+  return Promise.resolve(fill()).then((body) => {
+    cache.set(key, { at: Date.now(), ttl, body });
+    return body;
+  });
+}
 
 // ---------------------------------------------------------------- cboe
 
-async function fetchChainCboe(symbol) {
-  // Equities/ETFs are plain (SPY.json); indexes are underscore-prefixed (_SPX.json).
+// CBOE's CDN sometimes rejects script-looking user agents; look like a browser
+const CBOE_HEADERS = {
+  accept: 'application/json',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+};
+
+// Equities/ETFs are plain (SPY.json); indexes are underscore-prefixed (_SPX.json).
+async function cboeGetEither(base, symbol) {
   let lastErr = null;
   for (const s of [symbol, `_${symbol}`]) {
     try {
-      // CBOE's CDN sometimes rejects script-looking user agents; look like a browser
-      const res = await fetch(`${CBOE}${encodeURIComponent(s)}.json`, {
-        headers: {
-          accept: 'application/json',
-          'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
-        },
-      });
+      const res = await fetch(`${base}${encodeURIComponent(s)}.json`, { headers: CBOE_HEADERS });
       if (!res.ok) { lastErr = new Error(`CBOE HTTP ${res.status} for ${s}`); continue; }
       return await res.text();
     } catch (err) {
@@ -78,6 +89,35 @@ async function fetchChainCboe(symbol) {
     }
   }
   throw lastErr || new Error('unreachable');
+}
+
+function fetchChainCboe(symbol) {
+  return cboeGetEither(CBOE, symbol);
+}
+
+/* Daily closes for realized vol, from CBOE's free historical-chart endpoint
+ * (full history since 1975, all values as strings). Trimmed server-side so the
+ * client is not shipped 50 years of rows. */
+async function fetchHistoryCboe(symbol) {
+  const text = await cboeGetEither('https://cdn.cboe.com/api/global/delayed_quotes/charts/historical/', symbol);
+  const rows = JSON.parse(text)?.data;
+  if (!Array.isArray(rows)) throw new Error('unexpected CBOE history shape');
+  const days = rows
+    .slice(-HISTORY_DAYS)
+    .map((d) => ({ date: d.date, close: parseFloat(d.close) }))
+    .filter((d) => isFinite(d.close) && d.close > 0);
+  if (!days.length) throw new Error(`CBOE history for ${symbol} had no usable closes`);
+  return JSON.stringify({ symbol, _source: 'CBOE historical', days });
+}
+
+// Lightweight VIX spot (delayed) for cross-checking the chain-derived proxy.
+async function fetchVixQuote() {
+  const res = await fetch('https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json', { headers: CBOE_HEADERS });
+  if (!res.ok) throw new Error(`CBOE HTTP ${res.status} for _VIX quote`);
+  const json = await res.json();
+  const vix = Number(json?.data?.current_price ?? NaN);
+  if (!isFinite(vix) || vix <= 0) throw new Error('no VIX level in CBOE quote payload');
+  return JSON.stringify({ vix, asof: json?.data?.last_trade_time || null });
 }
 
 // ---------------------------------------------------------------- tradier
@@ -127,6 +167,8 @@ export async function fetchChainTradier(symbol, fetchImpl = fetch) {
         option: o.symbol, // OCC format, same as CBOE
         open_interest: Number(o.open_interest ?? 0),
         volume: Number(o.volume ?? 0),
+        bid: Number(o.bid ?? 0),
+        ask: Number(o.ask ?? 0),
         iv: Number(o.greeks?.mid_iv ?? o.greeks?.smv_vol ?? 0),
         gamma: Number(o.greeks?.gamma ?? NaN),
       });
@@ -141,24 +183,36 @@ export async function fetchChainTradier(symbol, fetchImpl = fetch) {
   });
 }
 
+// Daily closes from Tradier, normalized to the same shape as fetchHistoryCboe.
+async function fetchHistoryTradier(symbol) {
+  if (!TRADIER_TOKEN) throw new Error('TRADIER_TOKEN is not set');
+  const end = new Date().toISOString().slice(0, 10);
+  const start = new Date(Date.now() - 160 * 86400e3).toISOString().slice(0, 10);
+  const json = await tradierGet('/markets/history', { symbol, interval: 'daily', start, end });
+  const days = asArray(json?.history?.day)
+    .map((d) => ({ date: d.date, close: Number(d.close) }))
+    .filter((d) => isFinite(d.close) && d.close > 0)
+    .slice(-HISTORY_DAYS);
+  if (!days.length) throw new Error(`Tradier returned no history for ${symbol}`);
+  return JSON.stringify({ symbol, _source: 'Tradier history', days });
+}
+
 // ---------------------------------------------------------------- routing
 
 async function fetchChain(symbol, requestedSource) {
   const preferred = requestedSource || (TRADIER_TOKEN ? 'tradier' : 'cboe');
-  // unless a source was forced, fall back to the other one on failure
+  // unless a source was forced, fall back to the other one on failure; each
+  // body is cached under its TRUE source key, so a fallback body can never
+  // masquerade as the other source on a later explicit ?source= request
   const order = requestedSource ? [preferred]
     : preferred === 'tradier' ? ['tradier', 'cboe']
     : TRADIER_TOKEN ? ['cboe', 'tradier'] : ['cboe'];
 
   const errors = [];
   for (const source of order) {
-    const key = `${source}:${symbol}`;
-    const hit = cache.get(key);
-    if (hit && Date.now() - hit.at < CACHE_MS) return hit.body;
     try {
-      const body = source === 'tradier' ? await fetchChainTradier(symbol) : await fetchChainCboe(symbol);
-      cache.set(key, { at: Date.now(), body });
-      return body;
+      return await cached(`${source}:${symbol}`, CACHE_MS, () =>
+        source === 'tradier' ? fetchChainTradier(symbol) : fetchChainCboe(symbol));
     } catch (err) {
       errors.push(`${source}: ${err.message}`);
       console.error(`[gex] ${symbol} via ${source} failed: ${err.message}`);
@@ -167,23 +221,39 @@ async function fetchChain(symbol, requestedSource) {
   throw new Error(errors.join(' · '));
 }
 
+// CBOE history is keyless and covers indexes and equities alike, so prefer it
+// regardless of the chain source; Tradier is the fallback when a token exists.
+function fetchHistory(symbol) {
+  return cached(`history:${symbol}`, HISTORY_CACHE_MS, async () => {
+    try {
+      return await fetchHistoryCboe(symbol);
+    } catch (err) {
+      if (!TRADIER_TOKEN) throw err;
+      return fetchHistoryTradier(symbol);
+    }
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
-  if (url.pathname === '/api/chain') {
+  const api = { '/api/chain': true, '/api/history': true, '/api/vix': true }[url.pathname];
+  if (api) {
     const symbol = String(url.searchParams.get('symbol') || '').toUpperCase().replace(/[^A-Z^_.]/g, '');
     const source = { tradier: 'tradier', cboe: 'cboe' }[url.searchParams.get('source')] || '';
-    if (!symbol) {
+    if (!symbol && url.pathname !== '/api/vix') {
       res.writeHead(400, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ error: 'missing ?symbol=' }));
     }
     try {
-      const body = await fetchChain(symbol, source);
+      const body = url.pathname === '/api/chain' ? await fetchChain(symbol, source)
+        : url.pathname === '/api/history' ? await fetchHistory(symbol)
+        : await cached('vix', CACHE_MS, fetchVixQuote);
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return res.end(body);
     } catch (err) {
       res.writeHead(502, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify({ error: `could not fetch chain: ${err.message}` }));
+      return res.end(JSON.stringify({ error: `could not fetch ${url.pathname.slice(5)}: ${err.message}` }));
     }
   }
 

@@ -20,8 +20,15 @@ quotes need the little server because browsers block cross-origin requests to CB
 **CBOE delayed quotes (default).** CBOE publishes this API for free:
 `https://cdn.cboe.com/api/global/delayed_quotes/options/_SPX.json` (indexes use a `_`
 prefix; equities/ETFs like `SPY.json` don't). Each response contains the full options
-chain — every strike and expiry with open interest, volume, IV, and greeks — delayed
-about 15 minutes. `server.js` proxies and caches it for 60 seconds.
+chain — every strike and expiry with bid/ask, open interest, volume, IV, and greeks —
+delayed about 15 minutes. `server.js` proxies and caches it for 60 seconds.
+
+Two more free CBOE endpoints feed the volatility panel:
+
+- `charts/historical/{symbol}.json` — daily OHLC back to 1975, used for the 21-day
+  realized vol (proxied as `/api/history`, trimmed to the last 80 sessions).
+- `quotes/_VIX.json` — a ~500-byte delayed VIX spot, shown next to the chain-derived
+  proxy as a sanity reference (proxied as `/api/vix`).
 
 Works with SPX, SPY, QQQ, IWM, NDX, RUT, VIX, and any US ticker with listed options.
 
@@ -46,6 +53,8 @@ gitignored, and real environment variables override it.
   inside Tradier's rate limits. Responses are normalized to the CBOE payload shape, so
   the frontend is source-agnostic.
 - `?source=cboe` / `?source=tradier` on `/api/chain` forces a source per request.
+- If the token is expired or revoked, the server logs a warning and quietly falls back
+  to CBOE instead of failing (explicit `?source=tradier` still surfaces the error).
 
 ## What it shows
 
@@ -53,10 +62,11 @@ gitignored, and real environment variables override it.
 |---|---|
 | **Net GEX by strike** | Dollar dealer gamma per 1% spot move at each strike, with the **call wall**, **put wall**, spot, and **zero-gamma flip** annotated |
 | **Gamma profile vs spot** | Total net GEX recomputed at hypothetical spot levels ±10% — the zero crossing is the flip point |
-| **Vanna exposure** | Dollar delta dealers must re-hedge per +1 vol point, by strike |
-| **Charm exposure** | Dollar delta decay dealers must re-hedge per calendar day, by strike |
-| **Stat tiles** | Spot, net GEX, zero-gamma level, walls, and the gamma regime (positive = vol-suppressing, negative = vol-amplifying) |
-| **Expiry filters** | 0DTE / ≤1 week / ≤1 month / all — everything on the page re-computes against the slice |
+| **Vanna profile / ladder** | Dollar delta dealers must re-hedge per +1 vol point — as a profile vs hypothetical spot (with its own flip) or by strike, toggle per card |
+| **Charm profile / ladder** | Dollar delta decay dealers must re-hedge per calendar day — same profile/ladder toggle |
+| **Volatility & convexity** | VIX-style 30-day implied vol (the "VIX proxy"), the implied-vol term structure with realized vol and the live VIX overlaid, vol risk premium, term slope, 25Δ butterfly & skew, and a labeled heuristic verdict: is convexity being **bid** or **offered**? |
+| **Stat tiles** | Spot, net GEX, zero-gamma level, walls, gamma regime, VIX proxy (vs the real VIX), vol premium, and the convexity read |
+| **Expiry filters** | 0DTE / ≤1 week / ≤1 month / all — the exposure charts re-compute against the slice; the volatility panel is fixed-horizon and ignores it |
 
 A per-strike table view backs every chart, and the whole thing supports dark mode.
 
@@ -71,7 +81,25 @@ A per-strike table view backs every chart, and the whole thing supports dark mod
   gamma and are excluded from vanna/charm.
 - **Zero-gamma flip** — rather than a cumulative-sum shortcut, the total book gamma is
   re-priced at 81 hypothetical spot levels; the sign change closest to spot is the flip.
+  Vanna and charm get the same treatment (and their own flip markers) in profile view.
 - **Call/put wall** — strike with the largest call-side / put-side gamma.
+- **VIX proxy** — the CBOE VIX methodology (Cboe Volatility Index Mathematics
+  Methodology v5.0) applied to the loaded chain: per-expiry model-free variance from
+  OTM mid quotes ( σ² = (2/T)·Σ ΔK/K²·e^(rT)·Q − (1/T)(F/K₀−1)² ), forward from
+  put-call parity at the min-|C−P| strike, zero-bid/zero-ask quotes excluded with the
+  two-consecutive stopping rule, then the standard 30-day interpolation between the two
+  bracketing expiries. Validated in tests (a flat-IV chain recovers its IV) and, live,
+  lands within a few tenths of the published VIX. All of this lives in `gex/metrics.js`
+  (`node gex/metrics.test.js` runs the suite).
+- **Realized vol** — annualized close-to-close over the trailing 21 sessions
+  (zero-mean convention), from the free CBOE daily history.
+- **Convexity read** — a transparent, weighted heuristic on three inputs, each centered
+  on its typical SPX value: vol risk premium (IV30 − RV21, centered +3), term slope
+  (IV30 − IV7, centered +1.5; negative = backwardation), and the 25Δ butterfly
+  (centered +1). Score > 0.2 → convexity **bid** (traders paying up for optionality),
+  < −0.2 → **offered** (optionality cheap / supplied), else **balanced**. It measures
+  the *price* of convexity — the accepted proxy for demand vs supply — not actual
+  order flow, which needs positioning data no free feed provides.
 
 ## Honest limitations (why the paid tools cost money)
 
@@ -79,4 +107,10 @@ A per-strike table view backs every chart, and the whole thing supports dark mod
   real-time feeds and track intraday order flow to infer *actual* dealer positioning.
 - The long-calls/short-puts assumption is a blunt instrument. It's the same one the
   well-known free GEX charts use, but it's an approximation of reality.
+- The VIX proxy is VIX-*style*, not VIX: retail-delayed mids, a flat 4% rate instead
+  of per-expiry CMT-spline rates, days instead of minutes, and none of CBOE's quote
+  filtering. Expect it within a few tenths of the real print, not on top of it.
+- A fat vol premium or front-end backwardation can simply mean a scheduled event
+  (FOMC, CPI, earnings) is being priced, not generalized stress — the convexity read
+  doesn't know the calendar.
 - Educational use only. Not financial advice.

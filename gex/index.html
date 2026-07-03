@@ -107,6 +107,7 @@
     padding: 14px 16px 12px;
   }
   .card h2 { font-size: 14.5px; font-weight: 650; margin: 0 0 1px; }
+  .cardhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
   .card .desc { color: var(--text-muted); font-size: 12.5px; margin: 0 0 8px; }
   .legend { display: flex; gap: 14px; font-size: 12.5px; color: var(--text-secondary); margin: 2px 0 6px; }
   .legend .key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
@@ -137,6 +138,19 @@
   th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
   th { position: sticky; top: 0; background: var(--surface-1); color: var(--text-secondary); font-weight: 600; }
   th:first-child, td:first-child { text-align: left; }
+
+  /* ---- volatility & convexity readings ---- */
+  .vrows { margin-top: 10px; border-top: 1px solid var(--grid); }
+  .vrow {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 6px 2px; border-bottom: 1px solid var(--grid); font-size: 13px;
+  }
+  .vrow .k { color: var(--text-secondary); white-space: nowrap; }
+  .vrow .note { color: var(--text-muted); font-size: 12px; flex: 1; text-align: right; }
+  .vrow .v { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 64px; text-align: right; }
+  .vrow.verdict { border-bottom: none; padding-top: 10px; font-size: 13.5px; }
+  .vrow.verdict .k { color: var(--text-primary); font-weight: 650; white-space: normal; }
+  .vrow .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; }
 
   footer { margin-top: 24px; color: var(--text-muted); font-size: 12px; }
   .loading { opacity: 0.45; transition: opacity 0.15s; }
@@ -185,6 +199,14 @@
         </div>
         <div id="ladder"></div>
       </div>
+      <div class="card">
+        <h2>Volatility &amp; convexity</h2>
+        <p class="desc">VIX-style 30-day implied vol from OTM quotes, the vol term structure, and whether
+          the market is bidding for convexity or offering it — fixed horizons, unaffected by the expiry filter</p>
+        <div class="legend" id="termlegend"></div>
+        <div id="term"></div>
+        <div id="convexrows"></div>
+      </div>
     </div>
     <div class="col">
       <div class="card">
@@ -193,13 +215,25 @@
         <div id="profile"></div>
       </div>
       <div class="card">
-        <h2>Vanna exposure by strike</h2>
-        <p class="desc">$ delta dealers must hedge per +1 vol point, by strike</p>
+        <div class="cardhead">
+          <h2>Vanna exposure</h2>
+          <span class="chipset" data-viewfor="vanna" role="group" aria-label="Vanna view">
+            <button class="chip" data-view="profile" aria-pressed="true">Profile</button>
+            <button class="chip" data-view="ladder" aria-pressed="false">By strike</button>
+          </span>
+        </div>
+        <p class="desc" id="vannadesc">Net vanna $ recomputed at hypothetical spot levels — delta to hedge per +1 vol point</p>
         <div id="vanna"></div>
       </div>
       <div class="card">
-        <h2>Charm exposure by strike</h2>
-        <p class="desc">$ delta decay dealers must hedge per calendar day, by strike</p>
+        <div class="cardhead">
+          <h2>Charm exposure</h2>
+          <span class="chipset" data-viewfor="charm" role="group" aria-label="Charm view">
+            <button class="chip" data-view="profile" aria-pressed="true">Profile</button>
+            <button class="chip" data-view="ladder" aria-pressed="false">By strike</button>
+          </span>
+        </div>
+        <p class="desc" id="charmdesc">Net charm $ recomputed at hypothetical spot levels — delta decay per calendar day</p>
         <div id="charm"></div>
       </div>
     </div>
@@ -214,11 +248,15 @@
     Data: CBOE delayed quotes (~15 min lag, free, no key) by default, or Tradier when the server is
     started with a <code>TRADIER_TOKEN</code>. Convention: dealers long calls / short puts
     (the classic naive GEX assumption) — same as most public GEX tools. Vanna &amp; charm are computed
-    with Black-Scholes from each option's quoted IV. Educational use only; not financial advice.
+    with Black-Scholes from each option's quoted IV. The "VIX proxy" follows the CBOE VIX methodology
+    (OTM mid quotes, 30-day interpolation) but from delayed retail data — call it VIX-<em>style</em>, not VIX.
+    The convexity read is a labeled heuristic on the <em>price</em> of convexity (vol premium, term slope,
+    wing richness), not observed order flow. Educational use only; not financial advice.
   </footer>
 </div>
 
 <div id="tip" role="status"></div>
+<script src="metrics.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
