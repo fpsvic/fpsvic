@@ -49,9 +49,11 @@ gitignored, and real environment variables override it.
 - Greeks and IV come from ORATS and refresh roughly hourly — fine for GEX, since open
   interest (the other big input) only updates daily anyway.
 - Big chains like SPX have dozens of expirations, each a separate API call; the server
-  pulls the nearest 12 by default (`TRADIER_MAX_EXPIRIES=20` to raise it) to stay well
-  inside Tradier's rate limits. Responses are normalized to the CBOE payload shape, so
-  the frontend is source-agnostic.
+  pulls 12 by default (`TRADIER_MAX_EXPIRIES=20` to raise it) to stay well inside
+  Tradier's rate limits — the nearest few for 0DTE/weekly exposure, then dates nearest
+  fixed horizons (10–180d) so the 30-day VIX proxy and term structure stay honest even
+  on daily-expiry chains. Responses are normalized to the CBOE payload shape, so the
+  frontend is source-agnostic.
 - `?source=cboe` / `?source=tradier` on `/api/chain` forces a source per request.
 - If the token is expired or revoked, the server logs a warning and quietly falls back
   to CBOE instead of failing (explicit `?source=tradier` still surfaces the error).
