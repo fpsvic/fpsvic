@@ -778,6 +778,173 @@ function renderVolCard() {
   rowsWrap.append(list);
 }
 
+// ---------------------------------------------------------------- ai read
+
+/* Compact numeric snapshot of everything the dashboard computed — the AI read's
+ * entire world. Numbers only (strings are labels), rounded so that identical
+ * market states serialize identically and hit the server's response cache. */
+function buildSnapshot() {
+  if (!chain) return null;
+  const all = expFilter === 'all' && metrics ? metrics : computeMetrics(chain, 'all');
+  const week = computeMetrics(chain, '7');
+  const r2 = (v) => (v == null || !isFinite(v) ? null : Math.round(v * 100) / 100);
+  const topStrikes = [...all.strikes]
+    .sort((a, b) => Math.abs(b.gex) - Math.abs(a.gex))
+    .slice(0, 7)
+    .map((r) => ({ strike: r.strike, net_gex_usd: Math.round(r.gex), call_oi: r.callOi, put_oi: r.putOi }));
+  const closes = history?.days?.map((d) => d.close) ?? [];
+  const chg5d = closes.length >= 6
+    ? r2((closes[closes.length - 1] / closes[closes.length - 6] - 1) * 100)
+    : null;
+  return {
+    kind: 'gex-dashboard-snapshot',
+    symbol: chain.symbol,
+    spot: r2(chain.spot),
+    asof: chain.timestamp,
+    source: chain.source,
+    exposures: {
+      net_gex_all_usd: Math.round(all.netGex),
+      net_gex_1w_usd: Math.round(week.netGex),
+      net_vanna_usd_per_volpt: Math.round(all.netVanna),
+      net_charm_usd_per_day: Math.round(all.netCharm),
+      gamma_flip: r2(all.flip),
+      vanna_flip: r2(all.vannaFlip),
+      call_wall: all.callWall ? all.callWall.strike : null,
+      put_wall: all.putWall ? all.putWall.strike : null,
+      top_strikes_by_gex: topStrikes,
+    },
+    vol: volm && volm.ok ? {
+      iv30_vix_style: r2(volm.vix30),
+      vix_official: vixQuote ? r2(vixQuote.vix) : null,
+      rv21: r2(volm.rv),
+      vrp: r2(volm.vrp),
+      term_slope_30_7: r2(volm.slope),
+      fly_25d: volm.smile ? r2(volm.smile.fly) : null,
+      skew_25d: volm.smile ? r2(volm.smile.rr) : null,
+      term_structure: volm.term.filter((t) => t.days <= 130)
+        .map((t) => ({ days: Math.round(t.days), iv: r2(t.iv) })),
+      convexity_verdict: volm.read ? volm.read.verdict : null,
+      convexity_score: volm.read ? r2(volm.read.score) : null,
+    } : null,
+    price_change_5d_pct: chg5d,
+  };
+}
+
+let aiBusy = false;
+
+async function requestAiRead() {
+  if (aiBusy) return;
+  const out = $('#airead');
+  if (!chain) {
+    out.replaceChildren(el('p', { className: 'desc', text: 'Load a symbol (or demo data) first — the read needs a chain to read.' }));
+    return;
+  }
+  const seq = loadSeq; // a read for this chain must not render over a newer one
+  aiBusy = true;
+  $('#aibtn').disabled = true;
+  out.replaceChildren(el('p', { className: 'desc', text: 'Reading the book — usually 15–60 seconds…' }));
+  try {
+    const snapshot = buildSnapshot();
+    const res = await fetch('api/analyze', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(snapshot),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+    if (seq === loadSeq) renderAiRead(out, json, snapshot);
+  } catch (err) {
+    if (seq === loadSeq) {
+      out.replaceChildren(el('p', { className: 'desc', text: `AI read unavailable: ${err.message}` }));
+    }
+  } finally {
+    aiBusy = false;
+    $('#aibtn').disabled = false;
+  }
+}
+
+const REGIME_LABELS = {
+  pinned_range: 'Pinned range', drift_grind: 'Drift / grind', squeeze_risk: 'Squeeze risk',
+  stress_expansion: 'Stress expansion', transition: 'Transition',
+};
+const DIRECTION_STYLE = {
+  bullish: 'var(--pos)', bearish: 'var(--neg)',
+  neutral: 'var(--text-muted)', long_vol: 'var(--text-secondary)', short_vol: 'var(--text-secondary)',
+};
+
+function renderAiRead(container, { read, model, usage, asof }, snapshot) {
+  container.replaceChildren();
+  const add = (node) => container.append(node);
+
+  add(el('p', { className: 'ailead', text: read.one_liner }));
+
+  const regime = el('div', { className: 'airegime' });
+  regime.append(el('span', { className: 'aichip', text: REGIME_LABELS[read.regime.label] || read.regime.label }));
+  regime.append(el('span', { text: read.regime.summary }));
+  add(regime);
+
+  if (read.key_levels?.length) {
+    const rows = el('div', { className: 'vrows' });
+    for (const l of read.key_levels) {
+      rows.append(el('div', { className: 'vrow' }, [
+        el('span', { className: 'k', text: l.kind.replace(/_/g, ' ') }),
+        el('span', { className: 'note', text: l.note }),
+        el('span', { className: 'v', text: fmtStrike(l.level) }),
+      ]));
+    }
+    add(el('h3', { className: 'aihead', text: 'Key levels' }));
+    add(rows);
+  }
+
+  if (read.scenarios?.length) {
+    add(el('h3', { className: 'aihead', text: 'Scenarios' }));
+    for (const s of read.scenarios) {
+      const p = el('p', { className: 'aiscenario' });
+      p.append(el('b', { text: `If ${s.if} ` }));
+      p.append(document.createTextNode(`→ ${s.then}`));
+      add(p);
+    }
+  }
+
+  if (read.trade_structures?.length) {
+    add(el('h3', { className: 'aihead', text: 'Structures consistent with the read' }));
+    for (const t of read.trade_structures) {
+      const box = el('div', { className: 'aitrade' });
+      const head = el('div', { className: 'aitradehead' });
+      head.append(el('b', { text: t.name }));
+      head.append(el('span', { className: 'aichip', style: `color:${DIRECTION_STYLE[t.direction] || 'inherit'}`, text: t.direction.replace('_', ' ') }));
+      head.append(el('span', { className: 'aichip', text: `${t.confidence} confidence` }));
+      head.append(el('span', { className: 'aichip', text: t.timeframe }));
+      box.append(head);
+      box.append(el('p', { className: 'aistructure', text: t.structure }));
+      if (t.entry_condition) {
+        const entry = el('p', {});
+        entry.append(el('b', { text: 'Entry: ' }));
+        entry.append(document.createTextNode(t.entry_condition));
+        box.append(entry);
+      }
+      box.append(el('p', { text: t.rationale }));
+      const inv = el('p', { className: 'aiinvalid' });
+      inv.append(el('b', { text: 'Invalidation: ' }));
+      inv.append(document.createTextNode(t.invalidation));
+      box.append(inv);
+      add(box);
+    }
+  }
+
+  if (read.cautions?.length) {
+    add(el('h3', { className: 'aihead', text: 'Cautions' }));
+    const ul = el('ul', { className: 'aicautions' });
+    for (const c of read.cautions) ul.append(el('li', { text: c }));
+    add(ul);
+  }
+
+  add(el('p', {
+    className: 'aimeta',
+    text: `${model} · ${fmtInt(usage.input)} in / ${fmtInt(usage.output)} out tokens · read generated ${new Date(asof).toLocaleString()} · snapshot: ${snapshot.symbol} @ ${fmtStrike(snapshot.spot)}`,
+  }));
+}
+
 // ---------------------------------------------------------------- render all
 
 function renderAll() {
@@ -925,6 +1092,7 @@ async function loadSymbol(symRaw) {
     chain = parsed;
     history = aux.history;
     vixQuote = aux.vixQuote;
+    $('#airead').replaceChildren(); // an old AI read does not describe the new chain
     computeVolMetrics();
     renderAll();
   } catch (err) {
@@ -1009,6 +1177,7 @@ function loadDemo() {
   chain = demoChain();
   history = demoHistory(chain.spot);
   vixQuote = null;
+  $('#airead').replaceChildren(); // an old AI read does not describe the new chain
   computeVolMetrics();
   renderAll();
 }
@@ -1039,6 +1208,7 @@ for (const set of document.querySelectorAll('[data-viewfor]')) {
     renderGreek(set.dataset.viewfor);
   });
 }
+$('#aibtn').addEventListener('click', requestAiRead);
 $('#demo').addEventListener('click', loadDemo);
 $('#tabletoggle').addEventListener('click', () => {
   const wrap = $('#tablewrap');

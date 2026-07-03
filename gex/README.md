@@ -67,6 +67,7 @@ gitignored, and real environment variables override it.
 | **Vanna profile / ladder** | Dollar delta dealers must re-hedge per +1 vol point — as a profile vs hypothetical spot (with its own flip) or by strike, toggle per card |
 | **Charm profile / ladder** | Dollar delta decay dealers must re-hedge per calendar day — same profile/ladder toggle |
 | **Volatility & convexity** | VIX-style 30-day implied vol (the "VIX proxy"), the implied-vol term structure with realized vol and the live VIX overlaid, vol risk premium, term slope, 25Δ butterfly & skew, and a labeled heuristic verdict: is convexity being **bid** or **offered**? |
+| **AI read** | On demand, Claude reads the computed snapshot through a fixed rubric and returns a structured market read: regime label, key levels, if/then scenarios, and 2–4 option structures each with an explicit invalidation level and confidence. Requires an `ANTHROPIC_API_KEY` |
 | **Stat tiles** | Spot, net GEX, zero-gamma level, walls, gamma regime, VIX proxy (vs the real VIX), vol premium, and the convexity read |
 | **Expiry filters** | 0DTE / ≤1 week / ≤1 month / all — the exposure charts re-compute against the slice; the volatility panel is fixed-horizon and ignores it |
 
@@ -103,6 +104,28 @@ A per-strike table view backs every chart, and the whole thing supports dark mod
   the *price* of convexity — the accepted proxy for demand vs supply — not actual
   order flow, which needs positioning data no free feed provides.
 
+## The AI read
+
+The "AI read" card sends a compact JSON snapshot of everything the dashboard computed —
+exposures, walls, flips, the VIX proxy, term slope, smile, convexity verdict; numbers
+only, never screenshots — to `POST /api/analyze`, which calls Claude
+(`claude-opus-4-8` by default) with a fixed, versioned rubric and a forced JSON output
+schema. Consistency is the design goal: the rubric mechanically maps regimes to
+playbooks, the schema fixes the output shape, inputs are rounded so identical market
+states serialize identically, and responses are cached for 10 minutes on a hash of the
+snapshot. Same data in, same read out.
+
+Setup: put `ANTHROPIC_API_KEY=...` in `gex/.env` (create a key at platform.claude.com)
+and restart the server. Each read costs roughly 1–3¢ at Opus pricing; `ANTHROPIC_MODEL`
+and `ANTHROPIC_EFFORT` in `.env` tune the cost/latency/quality trade-off.
+`GEX_NO_LISTEN=1 node gex/analyze.test.js` tests the schema and request builder.
+
+Guardrails, by construction: the prompt forbids position sizing and imperatives, every
+structure must carry an explicit invalidation level, missing inputs must be surfaced as
+cautions rather than guessed, and nothing is ever executed — the output is a read, not
+an order. The model only sees numbers the dashboard computed; strings in the snapshot
+are declared data, not instructions.
+
 ## Honest limitations (why the paid tools cost money)
 
 - Data is ~15 minutes delayed; gexbot's paid tiers recalculate every minute from
@@ -115,4 +138,7 @@ A per-strike table view backs every chart, and the whole thing supports dark mod
 - A fat vol premium or front-end backwardation can simply mean a scheduled event
   (FOMC, CPI, earnings) is being priced, not generalized stress — the convexity read
   doesn't know the calendar.
+- The AI read only knows the snapshot: no news, no calendar, no order flow, no
+  positioning data. It is a disciplined interpretation of dealer-positioning math,
+  not a forecast — treat its structures as hypotheses with stated invalidations.
 - Educational use only. Not financial advice.

@@ -152,6 +152,25 @@
   .vrow.verdict .k { color: var(--text-primary); font-weight: 650; white-space: normal; }
   .vrow .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; }
 
+  /* ---- ai read ---- */
+  .ailead { font-size: 14.5px; font-weight: 650; margin: 4px 0 10px; }
+  .airegime { display: flex; gap: 10px; align-items: baseline; color: var(--text-secondary); }
+  .aichip {
+    display: inline-block; padding: 2px 9px; border: 1px solid var(--axis); border-radius: 999px;
+    font-size: 11.5px; font-weight: 600; color: var(--text-secondary); white-space: nowrap;
+  }
+  .aihead { font-size: 12.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-muted); margin: 16px 0 6px; }
+  .aiscenario { margin: 4px 0; color: var(--text-secondary); font-size: 13px; }
+  .aiscenario b { color: var(--text-primary); font-weight: 600; }
+  .aitrade { border: 1px solid var(--grid); border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-size: 13px; }
+  .aitrade p { margin: 6px 0 0; color: var(--text-secondary); }
+  .aitradehead { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .aistructure { font-variant-numeric: tabular-nums; color: var(--text-primary) !important; }
+  .aiinvalid b { color: var(--neg); font-weight: 600; }
+  .aicautions { margin: 4px 0; padding-left: 20px; color: var(--text-secondary); font-size: 12.5px; }
+  .aimeta { margin: 14px 0 0; color: var(--text-muted); font-size: 11.5px; }
+
   footer { margin-top: 24px; color: var(--text-muted); font-size: 12px; }
   .loading { opacity: 0.45; transition: opacity 0.15s; }
 </style>
@@ -206,6 +225,16 @@
         <div class="legend" id="termlegend"></div>
         <div id="term"></div>
         <div id="convexrows"></div>
+      </div>
+      <div class="card">
+        <div class="cardhead">
+          <h2>AI read</h2>
+          <button class="btn" id="aibtn">Generate read</button>
+        </div>
+        <p class="desc">Claude reads the computed exposures and vol metrics through a fixed rubric and returns
+          a structured market read with option-structure ideas — same data in, same read out. Ideas come with
+          explicit invalidation levels; nothing here is executed or sized. Educational only, not financial advice.</p>
+        <div id="airead"></div>
       </div>
     </div>
     <div class="col">
