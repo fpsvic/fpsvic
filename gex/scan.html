@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal GEX Scanner — vol-mispricing scan</title>
+<style>
+  :root {
+    --surface-1: #fcfcfb;
+    --page: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --pos: #2a78d6;      /* diverging pole: cheap vol / own convexity (like "offered") */
+    --neg: #e34948;      /* diverging pole: rich vol / sell premium (like "bid") */
+    --mid: #f0efec;      /* diverging neutral midpoint */
+    --accent: #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-1: #1a1a19;
+      --page: #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --pos: #3987e5;
+      --neg: #e66767;
+      --mid: #383835;
+      --accent: #3987e5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 20px 20px 48px; }
+
+  header.top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  header.top h1 { font-size: 20px; font-weight: 650; margin: 0; }
+  header.top .sub { color: var(--text-secondary); }
+  #stamp { color: var(--text-muted); font-size: 12.5px; margin: 0 0 14px; }
+
+  /* ---- controls / watchlist ---- */
+  .controls {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 12px; margin-bottom: 14px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .watchlist { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; flex: 1; min-width: 240px; }
+  .wchip {
+    display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px 4px 10px;
+    font-size: 12.5px; border-radius: 999px; border: 1px solid var(--axis);
+    color: var(--text-secondary); background: transparent; font-variant-numeric: tabular-nums;
+  }
+  .wchip .x {
+    cursor: pointer; width: 15px; height: 15px; line-height: 14px; text-align: center;
+    border-radius: 50%; color: var(--text-muted); font-size: 13px;
+  }
+  .wchip .x:hover { background: var(--mid); color: var(--text-primary); }
+  .controls input[type=text] {
+    width: 82px; padding: 6px 10px; font: inherit; text-transform: uppercase;
+    color: var(--text-primary); background: var(--page);
+    border: 1px solid var(--axis); border-radius: 7px;
+  }
+  .controls input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .btn {
+    padding: 6px 12px; font: inherit; cursor: pointer; border-radius: 7px;
+    color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--axis);
+  }
+  .btn:hover { background: var(--mid); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .spacer { flex: 1; }
+
+  /* ---- filter chips (direction) ---- */
+  .chipset { display: flex; gap: 4px; align-items: center; }
+  .chipset .lbl { color: var(--text-muted); font-size: 12.5px; margin: 0 4px 0 2px; }
+  .chip {
+    padding: 5px 10px; font: inherit; font-size: 13px; cursor: pointer;
+    border: 1px solid transparent; border-radius: 999px;
+    color: var(--text-secondary); background: transparent;
+  }
+  .chip:hover { background: var(--mid); }
+  .chip[aria-pressed="true"] { background: var(--mid); color: var(--text-primary); border-color: var(--axis); font-weight: 600; }
+
+  /* ---- progress ---- */
+  #progress { margin: 0 0 14px; height: 4px; border-radius: 999px; background: var(--grid); overflow: hidden; display: none; }
+  #progress.show { display: block; }
+  #progress .fill { height: 100%; width: 0; background: var(--accent); transition: width 0.2s ease; }
+
+  #banner {
+    display: none; margin-bottom: 14px; padding: 10px 14px; border-radius: 10px;
+    background: var(--surface-1); border: 1px solid var(--border); color: var(--text-secondary);
+  }
+  #banner.show { display: block; }
+
+  /* ---- summary tiles ---- */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .tile .label { color: var(--text-secondary); font-size: 12.5px; margin-bottom: 2px; }
+  .tile .value { font-size: 21px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .hint { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+  .tile .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: baseline; }
+
+  /* ---- layout ---- */
+  .grid { display: grid; grid-template-columns: minmax(560px, 3fr) minmax(280px, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px 12px; }
+  .cardhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .card h2 { font-size: 14.5px; font-weight: 650; margin: 0; }
+  .card .note { color: var(--text-muted); font-size: 12px; }
+
+  /* ---- ranked table ---- */
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { text-align: right; padding: 6px 9px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  th {
+    position: sticky; top: 0; z-index: 1; background: var(--surface-1); color: var(--text-secondary);
+    font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  th.l, td.l { text-align: left; }
+  /* a faint divider before the gamma-context column group */
+  th.groupstart, td.groupstart { border-left: 1px solid var(--grid); }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td { background: color-mix(in srgb, var(--mid) 55%, transparent); }
+  tbody tr.rank1 td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  tbody tr.unranked td, tbody tr.errorrow td { color: var(--text-muted); }
+  td .sym { font-weight: 650; color: var(--text-primary); font-size: 13px; }
+  td .subsym { color: var(--text-muted); font-size: 11px; }
+  .rankbadge { display: inline-block; min-width: 18px; color: var(--text-muted); font-weight: 600; }
+
+  /* score cell: numeric + direction word + a mini diverging bar (never color-alone) */
+  .score { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+  .score .num { font-weight: 700; font-size: 13.5px; min-width: 40px; text-align: right; }
+  .score .dir { font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; min-width: 40px; text-align: left; }
+  .score .bar { position: relative; width: 84px; height: 12px; background: var(--mid); border-radius: 3px; flex: none; }
+  .score .bar .maxis { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--axis); }
+  .score .bar .f { position: absolute; top: 1px; height: 10px; border-radius: 2px; }
+  .rich { color: var(--neg); }
+  .cheap { color: var(--pos); }
+  .fairtxt { color: var(--text-muted); }
+
+  /* why-it-ranked chips */
+  .whys { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-start; }
+  .why {
+    display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    border: 1px solid var(--axis); color: var(--text-secondary); white-space: nowrap;
+  }
+  .why.rich { border-color: color-mix(in srgb, var(--neg) 45%, var(--axis)); }
+  .why.cheap { border-color: color-mix(in srgb, var(--pos) 45%, var(--axis)); }
+  .regimedot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: baseline; }
+  td.muted { color: var(--text-muted); }
+
+  /* ---- AI top picks side panel ---- */
+  .aipick { border: 1px solid var(--grid); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .aipick .head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .aipick .head .sym { font-weight: 650; font-size: 13.5px; }
+  .aichip {
+    display: inline-block; padding: 2px 9px; border: 1px solid var(--axis); border-radius: 999px;
+    font-size: 11px; font-weight: 600; color: var(--text-secondary); white-space: nowrap;
+  }
+  .aipick .lead { font-size: 12.5px; color: var(--text-primary); margin: 2px 0 6px; }
+  .aipick .struct { font-size: 12px; color: var(--text-secondary); }
+  .aipick .struct b { color: var(--text-primary); }
+  .aipick .more { font-size: 11.5px; margin-top: 6px; display: inline-block; color: var(--accent); text-decoration: none; }
+  .aipick .more:hover { text-decoration: underline; }
+  .desc { color: var(--text-muted); font-size: 12.5px; }
+  a.rowlink { color: inherit; text-decoration: none; }
+
+  /* ---- tooltip (shared idiom with the dashboard) ---- */
+  #tip {
+    position: fixed; z-index: 10; pointer-events: none; display: none;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.18); padding: 8px 10px; font-size: 12.5px; min-width: 170px;
+  }
+  #tip .t-head { font-weight: 650; margin-bottom: 4px; }
+  #tip .t-row { display: flex; justify-content: space-between; gap: 14px; color: var(--text-secondary); }
+  #tip .t-row b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  footer { margin-top: 24px; color: var(--text-muted); font-size: 12px; }
+  .loading { opacity: 0.55; transition: opacity 0.15s; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Personal GEX Scanner</h1>
+    <span class="sub">multi-ticker vol-mispricing scan · click any row for the full dashboard</span>
+  </header>
+  <p id="stamp">Add or edit the watchlist, then Scan. Or try a Demo scan (works offline).</p>
+
+  <div class="controls" role="group" aria-label="Watchlist and scan controls">
+    <div class="watchlist" id="watchlist" aria-label="Watchlist"></div>
+    <input type="text" id="addsym" placeholder="Add…" aria-label="Add ticker" spellcheck="false" maxlength="8">
+    <button class="btn" id="add">Add</button>
+    <button class="btn" id="reset" title="Restore the default liquid watchlist">Reset</button>
+    <span class="spacer"></span>
+    <span class="chipset" id="dirfilter" role="group" aria-label="Direction filter">
+      <span class="lbl">Show</span>
+      <button class="chip" data-dir="all"  aria-pressed="true">All</button>
+      <button class="chip" data-dir="rich" aria-pressed="false">Rich</button>
+      <button class="chip" data-dir="cheap" aria-pressed="false">Cheap</button>
+    </span>
+    <button class="btn" id="demo">Demo scan</button>
+    <button class="btn primary" id="scan">Scan</button>
+  </div>
+
+  <div id="progress"><div class="fill"></div></div>
+  <div id="banner"></div>
+
+  <div class="tiles" id="summary"></div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="cardhead">
+        <h2>Ranked by vol mispricing</h2>
+        <span class="note">|score| high → low · gamma columns are context, they don't rank</span>
+      </div>
+      <div class="tablewrap">
+        <table id="scantable">
+          <thead>
+            <tr>
+              <th class="l">#</th>
+              <th class="l">Ticker</th>
+              <th>Spot</th>
+              <th>Vol score</th>
+              <th class="l">Why</th>
+              <th>IV30</th>
+              <th>RV21</th>
+              <th>VRP</th>
+              <th>Slope</th>
+              <th>25Δ fly</th>
+              <th>25Δ skew</th>
+              <th class="l">Convexity</th>
+              <th class="groupstart l">Gamma</th>
+              <th>Net GEX</th>
+              <th>Call wall</th>
+              <th>Put wall</th>
+              <th>γ flip</th>
+            </tr>
+          </thead>
+          <tbody id="scanbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="cardhead">
+        <h2>AI read — top picks</h2>
+        <button class="btn" id="aibtn" disabled>Read top 3</button>
+      </div>
+      <p class="desc" id="aidesc">After a scan, Claude reads the top-ranked names through the same rubric as the
+        dashboard and returns a structured take. Costs a few cents per read (cached); educational only, not advice.</p>
+      <div id="aipicks"></div>
+    </div>
+  </div>
+
+  <footer>
+    Vol-mispricing rank = a heuristic on the <em>price</em> of convexity (vol risk premium, term slope, 25Δ wings and the
+    convexity read), each expressed as a fraction of the name's own implied vol so a 15-vol index and a 60-vol single name
+    rank on the same footing. It leans <span class="rich">rich</span> (implied rich vs realized — a sell-premium tilt) or
+    <span class="cheap">cheap</span> (own convexity). Gamma columns are shown for context and never affect the rank.
+    The scan reads CBOE delayed quotes (~15 min) for breadth and speed; click a ticker to open its real-time Tradier
+    dashboard. Educational use only; not financial advice.
+  </footer>
+</div>
+
+<div id="tip" role="status"></div>
+<script src="metrics.js"></script>
+<script src="exposure.js"></script>
+<script src="scan.js"></script>
+</body>
+</html>

@@ -197,4 +197,80 @@ test('convexityRead verdicts', () => {
   assert.ok(M.convexityRead({ slope: -4 }).ok);
 });
 
+// ---------------------------------------------------------------- vol-mispricing score
+
+test('volMispricingScore: rich SPX example ranks rich, VRP-led, full coverage', () => {
+  // iv30=14, vrp=+5 (0.36 of iv), backwardation slope=-1.5, wings bid fly=1.3
+  const r = M.volMispricingScore({ iv30: 14, vrp: 5, slope: -1.5, fly: 1.3, convScore: 0.61 });
+  assert.ok(r.ok, r.reason);
+  approx(r.score, 0.67, 0.03, 'SPX score ~ +0.67');
+  assert.equal(r.direction, 'rich');
+  approx(r.coverage, 1, 1e-9, 'all four signals present');
+  assert.equal(r.confidence, 1, 'vrp present -> no penalty');
+  assert.equal(r.rankable, true);
+  assert.equal(r.topSignal, 'vrp');
+  // contributions reconstruct the score exactly
+  approx(r.signals.reduce((a, s) => a + s.contribution, 0), r.score, 1e-12, 'contributions sum to score');
+});
+
+test('volMispricingScore: same +5pt premium reads CHEAP-ward on a 60-vol name', () => {
+  // identical absolute vrp=+5 but iv30=60 -> only 0.08 of iv -> below the normal premium
+  const spx = M.volMispricingScore({ iv30: 14, vrp: 5 });
+  const tsla = M.volMispricingScore({ iv30: 60, vrp: 5 });
+  assert.ok(spx.signals[0].x > 0.5, 'rich on the index');
+  assert.ok(tsla.signals[0].x < 0, 'not rich on the high-vol name — the fairness fix');
+});
+
+test('volMispricingScore: TSLA worked example, missing fly not penalized', () => {
+  // iv30=60, vrp=+5, contango slope=+3, no 25d smile (fly null), weak conv
+  const r = M.volMispricingScore({ iv30: 60, vrp: 5, slope: 3, fly: null, convScore: 0.03 });
+  assert.ok(r.ok, r.reason);
+  approx(r.score, -0.13, 0.03, 'TSLA score ~ -0.13');
+  assert.equal(r.direction, 'fair', '|score| < 0.20');
+  approx(r.coverage, 0.85, 1e-9, 'fly dropped, coverage 1 - 0.15');
+  assert.ok(!r.signals.some((s) => s.name === 'fly'), 'fly signal absent, not scored 0');
+});
+
+test('volMispricingScore: weights renormalize over present signals', () => {
+  // VRP present -> conv is auto-derived from it too, so W = 0.45 + 0.15 = 0.60,
+  // and the score is the renormalized blend of the two (NOT divided by 1.0)
+  const r = M.volMispricingScore({ iv30: 20, vrp: 8 });
+  assert.ok(r.ok, r.reason);
+  approx(r.coverage, 0.60, 1e-9, 'vrp 0.45 + derived conv 0.15');
+  const vrp = r.signals.find((s) => s.name === 'vrp');
+  const conv = r.signals.find((s) => s.name === 'conv');
+  approx(r.score, (0.45 * vrp.x + 0.15 * conv.x) / 0.60, 1e-12, 'renormalized over the present weight');
+  assert.equal(r.rankable, true, 'vrp present -> rankable');
+});
+
+test('volMispricingScore: a lone thin signal is not rankable', () => {
+  // no vrp and only one primary (conv auto-derives but carries no new info)
+  const slopeOnly = M.volMispricingScore({ iv30: 20, slope: -5 });
+  assert.equal(slopeOnly.rankable, false, 'slope alone does not top the scan');
+  assert.ok(slopeOnly.signals.some((s) => s.name === 'conv'), 'conv corroborator auto-derived');
+  approx(slopeOnly.confidence, slopeOnly.coverage * 0.85, 1e-9, 'no realized-vol history -> 0.85 factor');
+  assert.equal(M.volMispricingScore({ iv30: 20, fly: 3 }).rankable, false, 'fly alone not rankable');
+  // two independent structural signals (no vrp) ARE rankable
+  assert.equal(M.volMispricingScore({ iv30: 20, slope: -5, fly: 3 }).rankable, true);
+});
+
+test('volMispricingScore: ok:false when no vol data', () => {
+  assert.equal(M.volMispricingScore({ iv30: NaN, vrp: 5 }).ok, false);
+  assert.equal(M.volMispricingScore({ iv30: 20 }).ok, false, 'iv30 alone is not a signal');
+  assert.equal(M.volMispricingScore({ iv30: 20, vrp: null, slope: null, fly: null }).ok, false);
+});
+
+test('volMispricingScore: null inputs are not mistaken for zero (isFinite(null) trap)', () => {
+  // isFinite(null) === true; a naive guard would score a null vrp as x for 0
+  const r = M.volMispricingScore({ iv30: 20, vrp: null, slope: 2, fly: null });
+  assert.ok(!r.signals.some((s) => s.name === 'vrp'), 'null vrp is absent');
+  assert.ok(!r.signals.some((s) => s.name === 'fly'), 'null fly is absent');
+});
+
+test('volMispricingScore: x stays clamped to [-1,1]', () => {
+  const hot = M.volMispricingScore({ iv30: 10, vrp: 50, slope: -30, fly: 20, convScore: 5 });
+  for (const s of hot.signals) assert.ok(s.x >= -1 && s.x <= 1, `${s.name} x in range`);
+  assert.ok(hot.score <= 1 && hot.score >= -1, 'score in range');
+});
+
 console.log(`\n${passed} tests passed${process.exitCode ? ' (with failures)' : ''}`);
