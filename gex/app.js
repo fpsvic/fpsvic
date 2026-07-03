@@ -533,7 +533,12 @@ function banner(msg) {
 
 async function fetchJson(url) {
   const res = await fetch(url, { headers: { accept: 'application/json' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    // the proxy puts the real reason in the body — surface it
+    let detail = '';
+    try { detail = (await res.json()).error || ''; } catch { /* not json */ }
+    throw new Error(detail || `HTTP ${res.status}`);
+  }
   return res.json();
 }
 

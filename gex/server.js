@@ -64,8 +64,12 @@ async function fetchChainCboe(symbol) {
   let lastErr = null;
   for (const s of [symbol, `_${symbol}`]) {
     try {
+      // CBOE's CDN sometimes rejects script-looking user agents; look like a browser
       const res = await fetch(`${CBOE}${encodeURIComponent(s)}.json`, {
-        headers: { accept: 'application/json', 'user-agent': 'personal-gex/1.0' },
+        headers: {
+          accept: 'application/json',
+          'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+        },
       });
       if (!res.ok) { lastErr = new Error(`CBOE HTTP ${res.status} for ${s}`); continue; }
       return await res.text();
@@ -140,14 +144,27 @@ export async function fetchChainTradier(symbol, fetchImpl = fetch) {
 // ---------------------------------------------------------------- routing
 
 async function fetchChain(symbol, requestedSource) {
-  const source = requestedSource || (TRADIER_TOKEN ? 'tradier' : 'cboe');
-  const key = `${source}:${symbol}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.body;
+  const preferred = requestedSource || (TRADIER_TOKEN ? 'tradier' : 'cboe');
+  // unless a source was forced, fall back to the other one on failure
+  const order = requestedSource ? [preferred]
+    : preferred === 'tradier' ? ['tradier', 'cboe']
+    : TRADIER_TOKEN ? ['cboe', 'tradier'] : ['cboe'];
 
-  const body = source === 'tradier' ? await fetchChainTradier(symbol) : await fetchChainCboe(symbol);
-  cache.set(key, { at: Date.now(), body });
-  return body;
+  const errors = [];
+  for (const source of order) {
+    const key = `${source}:${symbol}`;
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.at < CACHE_MS) return hit.body;
+    try {
+      const body = source === 'tradier' ? await fetchChainTradier(symbol) : await fetchChainCboe(symbol);
+      cache.set(key, { at: Date.now(), body });
+      return body;
+    } catch (err) {
+      errors.push(`${source}: ${err.message}`);
+      console.error(`[gex] ${symbol} via ${source} failed: ${err.message}`);
+    }
+  }
+  throw new Error(errors.join(' · '));
 }
 
 const server = http.createServer(async (req, res) => {
