@@ -137,7 +137,28 @@ async function tradierGet(pathname, params, fetchImpl = fetch) {
   return res.json();
 }
 
-/* Pull quote + nearest expirations + per-expiration chains from Tradier and
+/* With a limited request budget, strictly-nearest expirations never reach the
+ * 30-day horizon on daily-expiry underlyings (SPX/SPY), which starves the
+ * VIX-style calc and the term structure. Keep the front dense for 0DTE/weekly
+ * exposure, then spend the rest on dates nearest fixed horizons out to ~6 months. */
+export function pickExpirations(dates, max, now = Date.now()) {
+  if (dates.length <= max) return dates;
+  const chosen = new Set(dates.slice(0, Math.min(5, max)));
+  const dte = (d) => (Date.parse(`${d}T20:00:00Z`) - now) / 86400e3;
+  for (const target of [10, 15, 21, 28, 35, 45, 60, 90, 120, 180]) {
+    if (chosen.size >= max) break;
+    let best = null, bestDist = Infinity;
+    for (const d of dates) {
+      if (chosen.has(d)) continue;
+      const dist = Math.abs(dte(d) - target);
+      if (dist < bestDist) { bestDist = dist; best = d; }
+    }
+    if (best) chosen.add(best);
+  }
+  return dates.filter((d) => chosen.has(d)); // chronological
+}
+
+/* Pull quote + a spread of expirations + per-expiration chains from Tradier and
  * reshape into CBOE's payload format ({data: {current_price, options: [...]}}).
  * fetchImpl is injectable for tests. */
 export async function fetchChainTradier(symbol, fetchImpl = fetch) {
@@ -152,7 +173,7 @@ export async function fetchChainTradier(symbol, fetchImpl = fetch) {
   const spot = Number(quote?.last ?? quote?.close ?? NaN);
   if (!isFinite(spot) || spot <= 0) throw new Error(`Tradier returned no quote for ${symbol}`);
 
-  const dates = asArray(expRes?.expirations?.date).slice(0, TRADIER_MAX_EXPIRIES);
+  const dates = pickExpirations(asArray(expRes?.expirations?.date), TRADIER_MAX_EXPIRIES);
   if (!dates.length) throw new Error(`Tradier lists no option expirations for ${symbol}`);
 
   const chains = await Promise.all(
@@ -178,7 +199,7 @@ export async function fetchChainTradier(symbol, fetchImpl = fetch) {
 
   return JSON.stringify({
     timestamp: new Date().toISOString(),
-    _source: `Tradier (nearest ${dates.length} expirations)`,
+    _source: `Tradier (${dates.length} expirations, front + horizon spread)`,
     data: { symbol, current_price: spot, options },
   });
 }
