@@ -29,6 +29,20 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
+/* metrics.js and exposure.js are classic browser scripts (this file is ESM);
+ * load them through a CommonJS-style Function shim so the server computes the
+ * EXACT same exposure / vol / mispricing numbers the dashboard does — no option
+ * chain (a single SPX payload is ~13 MB) ever has to cross the wire, and the
+ * /api/analyze snapshot serializes identically no matter which side built it. */
+function loadScript(file) {
+  const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
+  const shim = { exports: {} };
+  new Function('module', 'exports', src)(shim, shim.exports);
+  return shim.exports;
+}
+const GexMetrics = loadScript('metrics.js');
+const GexExposure = loadScript('exposure.js');
+
 /* Load gex/.env if present (simple KEY=value lines, # comments ignored). Real
  * env vars win for ordinary settings, but for CREDENTIALS the file wins:
  * Windows terminals keep the environment they were opened with, so a stale
@@ -58,6 +72,7 @@ const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.GEX_HOST || '127.0.0.1';
 const CACHE_MS = 60_000;
 const HISTORY_CACHE_MS = 30 * 60_000;
+const SCAN_CACHE_MS = 60_000; // assembled scan row; refreshes with the underlying chain
 const HISTORY_DAYS = 80; // enough for a 21-day realized-vol window with margin
 
 const CBOE = 'https://cdn.cboe.com/api/global/delayed_quotes/options/';
@@ -75,15 +90,23 @@ const MIME = {
   '.json': 'application/json; charset=utf-8',
 };
 
-const cache = new Map(); // key -> {at, ttl, body}
+const cache = new Map();    // key -> {at, ttl, body}
+const inflight = new Map(); // key -> pending promise, so concurrent callers share one fetch
 
+/* Cache with in-flight de-duplication: when several scan workers ask for the
+ * same 13 MB SPX chain (or the shared VIX quote) at once, only the first does
+ * the work; the rest await the same promise instead of firing parallel fetches. */
 function cached(key, ttl, fill) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < hit.ttl) return hit.body;
-  return Promise.resolve(fill()).then((body) => {
-    cache.set(key, { at: Date.now(), ttl, body });
-    return body;
-  });
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const p = Promise.resolve().then(fill).then(
+    (body) => { cache.set(key, { at: Date.now(), ttl, body }); inflight.delete(key); return body; },
+    (err) => { inflight.delete(key); throw err; },
+  );
+  inflight.set(key, p);
+  return p;
 }
 
 // ---------------------------------------------------------------- cboe
@@ -442,14 +465,17 @@ function readJsonBody(req, limit = ANALYZE_MAX_BODY) {
 
 // ---------------------------------------------------------------- routing
 
-async function fetchChain(symbol, requestedSource) {
-  const preferred = requestedSource || (TRADIER_TOKEN ? 'tradier' : 'cboe');
+async function fetchChain(symbol, requestedSource, { preferCboe = false } = {}) {
   // unless a source was forced, fall back to the other one on failure; each
   // body is cached under its TRUE source key, so a fallback body can never
-  // masquerade as the other source on a later explicit ?source= request
-  const order = requestedSource ? [preferred]
-    : preferred === 'tradier' ? ['tradier', 'cboe']
-    : TRADIER_TOKEN ? ['cboe', 'tradier'] : ['cboe'];
+  // masquerade as the other source on a later explicit ?source= request.
+  // preferCboe flips the default order to CBOE-first: the multi-ticker scanner
+  // uses it because CBOE returns a whole chain in ONE request, whereas Tradier
+  // fans out ~20 sequential per-expiry calls per ticker and cannot survive a
+  // concurrent scan (the single-ticker dashboard still prefers Tradier).
+  const order = requestedSource ? [requestedSource]
+    : preferCboe ? (TRADIER_TOKEN ? ['cboe', 'tradier'] : ['cboe'])
+    : TRADIER_TOKEN ? ['tradier', 'cboe'] : ['cboe'];
 
   const errors = [];
   for (const source of order) {
@@ -467,9 +493,11 @@ async function fetchChain(symbol, requestedSource) {
 // Tradier first when a token exists (live data, one consistent source);
 // CBOE stays as the free keyless fallback so an outage or a dead token
 // degrades to delayed data instead of no data.
-function fetchHistory(symbol) {
-  return cached(`history:${symbol}`, HISTORY_CACHE_MS, async () => {
-    if (TRADIER_TOKEN) {
+function fetchHistory(symbol, { preferCboe = false } = {}) {
+  // key by source preference: a CBOE-first scan must NOT satisfy the Tradier-first
+  // dashboard's /api/history read (which would serve it delayed closes)
+  return cached(`history:${preferCboe ? 'cboe' : 'auto'}:${symbol}`, HISTORY_CACHE_MS, async () => {
+    if (TRADIER_TOKEN && !preferCboe) {
       try {
         return await fetchHistoryTradier(symbol);
       } catch (err) {
@@ -480,9 +508,11 @@ function fetchHistory(symbol) {
   });
 }
 
-function fetchVix() {
-  return cached('vix', CACHE_MS, async () => {
-    if (TRADIER_TOKEN) {
+function fetchVix({ preferCboe = false } = {}) {
+  // same source-namespacing as fetchHistory: the scan's CBOE VIX must not leak
+  // into the dashboard's /api/vix (Tradier-first) cache read
+  return cached(`vix:${preferCboe ? 'cboe' : 'auto'}`, CACHE_MS, async () => {
+    if (TRADIER_TOKEN && !preferCboe) {
       try {
         return await fetchVixQuoteTradier();
       } catch (err) {
@@ -491,6 +521,57 @@ function fetchVix() {
     }
     return fetchVixQuoteCboe();
   });
+}
+
+// ---------------------------------------------------------------- scan (multi-ticker vol-mispricing)
+
+/* Assemble ONE compact scan row from already-fetched bodies. Pure given its
+ * inputs (no network, no clock beyond `now`), so it is directly unit-testable.
+ * Parsing lives here; the actual row assembly is GexExposure.scanRowFromChain,
+ * shared with the browser's offline Demo scan so the two can never drift. The
+ * row carries the reusable /api/analyze snapshot so the UI can send the top
+ * picks straight to the (unchanged) analyze endpoint and hit its cache. */
+export function assembleScanRow({ symbol, chainBody, historyBody = null, vixOfficial = null, source = null, now = Date.now() }) {
+  const chain = GexExposure.parseCboe(JSON.parse(chainBody), symbol, now);
+  let closes = [];
+  if (historyBody) {
+    try { closes = (JSON.parse(historyBody)?.days ?? []).map((d) => d.close); }
+    catch { /* history is an enrichment; absent -> vrp null, row still scores on what it has */ }
+  }
+  return GexExposure.scanRowFromChain(chain, closes, GexMetrics, { vixOfficial, source });
+}
+
+/* Fetch one ticker's chain (+ history, + the shared VIX quote) reusing the exact
+ * single-ticker paths and caches, then assemble its scan row. NEVER throws — a
+ * bad ticker yields an { ok:false } error row so one failure can't sink the scan.
+ * The row is cached so a rescan (or a detail-page click-through) is cheap. */
+export async function scanRow(symbol, requestedSource = '', { refresh = false } = {}) {
+  const sourceKey = requestedSource || 'auto';
+  const key = `scan:${symbol}:${sourceKey}`;
+  if (refresh) cache.delete(key);
+  // A scan surveys many tickers, so it favors CBOE's single-request chains for
+  // breadth/speed; a user who explicitly asks for Tradier still gets it.
+  const preferCboe = requestedSource !== 'tradier';
+  try {
+    return await cached(key, SCAN_CACHE_MS, async () => {
+      // Promise.resolve() wraps these because cached() returns a bare value (not
+      // a promise) on a cache HIT — once the first ticker warms the shared VIX /
+      // history entries, a raw .catch() on that value would throw and break the
+      // rest of the scan. The chain fetch stays unwrapped so its failure (the one
+      // that matters) propagates to the outer catch and yields an error row.
+      const [chainBody, historyBody, vixBody] = await Promise.all([
+        fetchChain(symbol, requestedSource, { preferCboe }),
+        Promise.resolve(fetchHistory(symbol, { preferCboe })).catch(() => null), // enrichment: absent -> vrp null
+        Promise.resolve(fetchVix({ preferCboe })).catch(() => null),             // shared across the whole scan
+      ]);
+      let vixOfficial = null;
+      if (vixBody) { try { vixOfficial = JSON.parse(vixBody).vix ?? null; } catch { /* ignore */ } }
+      return assembleScanRow({ symbol, chainBody, historyBody, vixOfficial, source: requestedSource || null });
+    });
+  } catch (err) {
+    console.error(`[gex] scan ${symbol} failed: ${err.message}`);
+    return { symbol, ok: false, error: err.message, source: requestedSource || null };
+  }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -527,6 +608,23 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // One scan row per request: the browser drives a small concurrency pool over
+  // these so rows stream in and rank progressively. Always 200 with the row
+  // (ok or error) so a single bad ticker never aborts the whole scan. Never
+  // touches Claude — the AI top-picks step reuses /api/analyze from the client.
+  if (url.pathname === '/api/scan/row') {
+    const symbol = String(url.searchParams.get('symbol') || '').toUpperCase().replace(/[^A-Z^_.]/g, '');
+    const source = { tradier: 'tradier', cboe: 'cboe' }[url.searchParams.get('source')] || '';
+    const refresh = url.searchParams.get('refresh') === '1';
+    if (!symbol) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'missing ?symbol=' }));
+    }
+    const row = await scanRow(symbol, source, { refresh });
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(row));
+  }
+
   const api = { '/api/chain': true, '/api/history': true, '/api/vix': true }[url.pathname];
   if (api) {
     const symbol = String(url.searchParams.get('symbol') || '').toUpperCase().replace(/[^A-Z^_.]/g, '');
@@ -547,8 +645,10 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // static files, confined to this directory
-  const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+  // static files, confined to this directory. The multi-ticker scanner is the
+  // landing view; the single-ticker dashboard stays reachable at /index.html
+  // (each scan row click-throughs to /index.html?symbol=SYM).
+  const rel = url.pathname === '/' ? 'scan.html' : url.pathname.slice(1);
   const file = path.normalize(path.join(ROOT, rel));
   if (!file.startsWith(ROOT) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
     res.writeHead(404, { 'content-type': 'text/plain' });
@@ -568,6 +668,6 @@ if (!process.env.GEX_NO_LISTEN) {
     console.log(`Personal GEX running at http://localhost:${PORT}`);
     console.log('Data source: %s', TRADIER_TOKEN ? `Tradier (${TRADIER_BASE})` : 'CBOE delayed quotes');
     console.log('AI reads: %s', ANTHROPIC_KEY ? `enabled (${ANTHROPIC_MODEL}, effort ${ANTHROPIC_EFFORT})` : 'disabled (set ANTHROPIC_API_KEY in gex/.env)');
-    console.log('Try http://localhost:%d/?symbol=SPX or ?demo=1 for synthetic data.', PORT);
+    console.log('Scanner: http://localhost:%d/  ·  single-ticker dashboard: http://localhost:%d/index.html?symbol=SPX (or ?demo=1)', PORT, PORT);
   });
 }

@@ -277,11 +277,87 @@
     return { ok: true, score, verdict: score > 0.2 ? 'bid' : score < -0.2 ? 'offered' : 'balanced' };
   }
 
+  // ---------------------------------------------------------------- cross-ticker vol-mispricing score
+
+  function fin(v) { return v != null && isFinite(v); } // isFinite(null) is TRUE (null->0); guard explicitly
+
+  /* Rank of how mispriced a name's implied vol is, on a scale that is FAIR across
+   * a 14-vol index and a 60-vol single name. A vol-relative generalization of
+   * convexityRead(): every raw vol-points input is divided by iv30 before
+   * thresholding, so equal FRACTIONS of the vol level score alike — a +5pt premium
+   * is rich on 14-vol SPX (0.36 of iv) but cheap on 60-vol TSLA (0.08 of iv).
+   *
+   * Signed score in [-1,1]: > 0 vol RICH (implied expensive vs realized/structure —
+   * a sell-premium lean), < 0 vol CHEAP (own-convexity lean). Rank by |score|; the
+   * sign is the lean. Gamma metrics never enter here — they are display-only by design.
+   *
+   * Signals (each present iff its raw input is finite; weights renormalize over the
+   * present set exactly like convexityRead, so a missing optional input never drags
+   * the score toward 0). Centers equal convexityRead's SPX thresholds converted to
+   * fractions at iv=15, so at SPX-typical vol this agrees with the detail-page read.
+   *   iv30      - VIX-style 30d implied vol, vol pts (the normalizer; required)
+   *   vrp       - iv30 - rv21, vol pts   (w 0.45, primary)
+   *   slope     - iv30 - iv7,  vol pts   (w 0.25, negative = backwardation = rich)
+   *   fly       - 25d butterfly, vol pts (w 0.15, wing/tail richness)
+   *   convScore - convexityRead().score in [-1,1] (w 0.15, low-weight corroborator;
+   *               recomputed here from vrp/slope/fly when null)
+   * Returns { ok:false, reason } or
+   *   { ok:true, score, magnitude, direction:'rich'|'cheap'|'fair', coverage,
+   *     confidence, rankable, signals:[{name,raw,frac,x,weight,contribution,fired}], topSignal } */
+  function volMispricingScore({ iv30, vrp = null, slope = null, fly = null, convScore = null }) {
+    if (!fin(iv30)) return { ok: false, reason: 'no vol data' };
+    const IVf = Math.max(iv30, 1); // floor: single-digit iv would blow the fractions up
+
+    // corroborator: derive convexityRead's own score if the caller did not pass one
+    if (!fin(convScore) && (fin(vrp) || fin(slope) || fin(fly))) {
+      const cr = convexityRead({ vrp, slope, fly });
+      convScore = cr.ok ? cr.score : null;
+    }
+
+    const defs = [
+      { name: 'vrp',   w: 0.45, raw: vrp,       frac: fin(vrp)   ? vrp / IVf   : null, x: fin(vrp)   ? clamp((vrp / IVf - 0.20) / 0.25, -1, 1)     : null },
+      { name: 'slope', w: 0.25, raw: slope,     frac: fin(slope) ? slope / IVf : null, x: fin(slope) ? clamp(-(slope / IVf - 0.10) / 0.13, -1, 1) : null },
+      { name: 'fly',   w: 0.15, raw: fly,       frac: fin(fly)   ? fly / IVf   : null, x: fin(fly)   ? clamp((fly / IVf - 0.07) / 0.07, -1, 1)     : null },
+      { name: 'conv',  w: 0.15, raw: convScore, frac: null,                            x: fin(convScore) ? clamp(convScore, -1, 1)                 : null },
+    ];
+
+    const present = defs.filter((d) => d.x != null);
+    const W = present.reduce((a, d) => a + d.w, 0);
+    if (W === 0) return { ok: false, reason: 'no vol data' };
+
+    const score = present.reduce((a, d) => a + d.w * d.x, 0) / W;
+    const signals = present.map((d) => ({
+      name: d.name, raw: d.raw, frac: d.frac, x: d.x, weight: d.w,
+      contribution: (d.w / W) * d.x, // signed; sums to score
+      fired: Math.abs(d.x) >= 0.5,   // notably off its typical band
+    }));
+    let topSignal = null, best = -Infinity;
+    for (const s of signals) {
+      const m = Math.abs(s.contribution);
+      if (m > best) { best = m; topSignal = s.name; }
+    }
+
+    // conv is derived from vrp/slope/fly, so it inflates W but carries no new
+    // information — rankability keys off the INDEPENDENT primary signals only.
+    const hasVrp = present.some((d) => d.name === 'vrp');
+    const nPrimary = present.filter((d) => d.name !== 'conv').length;
+    const coverage = W; // raw present weight (incl. conv); SPX all-signals -> 1.0, a name missing fly -> 0.85
+    return {
+      ok: true, score, magnitude: Math.abs(score),
+      direction: score >= 0.20 ? 'rich' : score <= -0.20 ? 'cheap' : 'fair',
+      coverage,
+      confidence: coverage * (hasVrp ? 1 : 0.85), // only the missing-realized-vol gap; tiebreak/gate, never a score multiplier
+      rankable: hasVrp || nPrimary >= 2,           // a lone thin signal is a 'low-data' row, never tops the scan
+      signals, topSignal,
+    };
+  }
+
   // ---------------------------------------------------------------- exports
 
   const GexMetrics = {
     clamp, normCdf, normPdf, bsPrice, bsDelta,
     expiryVariance, vixStyle, ivAtHorizon, realizedVol, smileAtExpiry, convexityRead,
+    volMispricingScore,
   };
   root.GexMetrics = GexMetrics;
   if (typeof module !== 'undefined' && module.exports) module.exports = GexMetrics;

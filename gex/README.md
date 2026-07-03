@@ -1,19 +1,67 @@
 # Personal GEX
 
-A free, self-hosted gamma-exposure dashboard in the spirit of gexa.ai and gexbot.com —
-built for personal use with zero dependencies and zero data-feed cost.
+A free, self-hosted gamma-exposure toolkit in the spirit of gexa.ai and gexbot.com —
+built for personal use with zero dependencies and zero data-feed cost. Two views:
+
+- a **multi-ticker scanner** (`/`) that ranks a watchlist by how mispriced each name's
+  implied vol is, so you can spot top-tier situations across many symbols at once, and
+- the original **single-ticker dashboard** (`/index.html?symbol=SPX`) — dealer
+  gamma/vanna/charm exposure, walls, the zero-gamma flip, the VIX-style vol panel, and
+  the on-demand AI read — that each scanner row click-throughs into.
 
 ## Quick start
 
 ```bash
 node gex/server.js
-# open http://localhost:8787
+# open http://localhost:8787  -> the scanner
 ```
 
 That's it. No npm install, no API key, no account. Requires Node 18+ (for built-in `fetch`).
+`/` opens the scanner; the single-ticker dashboard lives at `/index.html?symbol=SPX`.
 
-You can also open `gex/index.html` directly as a file and click **Demo data**, but live
-quotes need the little server because browsers block cross-origin requests to CBOE.
+You can also open `gex/scan.html` or `gex/index.html` directly as a file and click
+**Demo scan** / **Demo data**, but live quotes need the little server because browsers
+block cross-origin requests to CBOE.
+
+## The scanner
+
+The landing page scans a watchlist and ranks each ticker by a **cross-ticker
+vol-mispricing score** — a heuristic on the *price* of convexity (vol risk premium, term
+slope, 25Δ butterfly, and the convexity read), with every raw vol-point input divided by
+the ticker's own 30-day implied vol so a 14-vol index and a 60-vol single name rank on the
+same footing. The signed score leans **rich** (implied expensive vs realized — a
+sell-premium tilt) or **cheap** (own convexity); rows sort by magnitude, and the sign is
+the lean. A `+5`-vol-point premium reads as rich on 14-vol SPX (0.36 of its vol) but cheap
+on 60-vol TSLA (0.08 of its vol) — the fairness gap raw thresholds can't close. The scoring
+math is `GexMetrics.volMispricingScore` in `metrics.js`, next to `convexityRead`.
+
+- **Gamma context, not gamma ranking.** Net GEX, the gamma regime, call/put walls and the
+  zero-gamma flip ride along as display columns but never enter the rank — the scan is
+  about vol mispricing; the gamma picture is what you dig into on the detail page.
+- **Editable watchlist**, seeded with a liquid default (SPX, SPY, QQQ, IWM, NDX, RUT, and
+  the megacaps) and persisted in `localStorage`. Add/remove tickers; **Reset** restores
+  the defaults.
+- **CBOE for breadth.** The scan reads CBOE delayed quotes (~15 min) — one request per
+  ticker, so a whole watchlist scans in seconds. Tradier's real-time feed makes ~20
+  sequential per-expiry calls per ticker, which can't survive a concurrent fan-out, so the
+  scanner deliberately uses CBOE and the *detail page* uses Tradier for the real-time
+  deep-dive. (Pass `?source=tradier` on `/api/scan/row` to override per request.)
+- **AI on the top picks.** After a scan, **Read top 3** sends the top-ranked names'
+  snapshots to the same `/api/analyze` endpoint the dashboard uses (same rubric, same
+  cache) and shows a compact structured read per name — regime, a one-liner, and the
+  single highest-confidence structure — each linking to the full read. Manual, so it only
+  spends API credits when you ask; requires an `ANTHROPIC_API_KEY`.
+- **Demo scan** builds a spread of synthetic tickers entirely client-side (no server, no
+  network) via the exact same row assembler the server uses.
+
+Each row is computed server-side at `GET /api/scan/row?symbol=SYM` (the browser drives a
+small concurrency pool so rows stream in and rank once the scan settles). A single bad
+ticker yields an error row instead of sinking the scan. The exposure/vol/score math is
+shared with the dashboard through `exposure.js` (`GexExposure`, a dual-loading module like
+`metrics.js`), so the server computes exactly what the browser does — a 13 MB chain never
+crosses the wire, and the snapshot serializes identically on both sides so the analyze
+cache is shared. `GEX_NO_LISTEN=1 node gex/scan.test.js` and `node gex/exposure.test.js`
+test the pipeline.
 
 ## Where the data comes from
 
