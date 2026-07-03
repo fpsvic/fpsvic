@@ -554,7 +554,12 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(404, { 'content-type': 'text/plain' });
     return res.end('not found');
   }
-  res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' });
+  // no-cache: browsers otherwise heuristically cache app.js/index.html and can
+  // serve a stale mix of old and new code after an upgrade (blank/broken page)
+  res.writeHead(200, {
+    'content-type': MIME[path.extname(file)] || 'application/octet-stream',
+    'cache-control': 'no-cache',
+  });
   fs.createReadStream(file).pipe(res);
 });
 
