@@ -211,7 +211,8 @@
   </div>
 
   <footer>
-    Data: CBOE delayed quotes (~15 min lag), free, no key. Convention: dealers long calls / short puts
+    Data: CBOE delayed quotes (~15 min lag, free, no key) by default, or Tradier when the server is
+    started with a <code>TRADIER_TOKEN</code>. Convention: dealers long calls / short puts
     (the classic naive GEX assumption) — same as most public GEX tools. Vanna &amp; charm are computed
     with Black-Scholes from each option's quoted IV. Educational use only; not financial advice.
   </footer>

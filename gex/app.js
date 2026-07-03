@@ -122,7 +122,7 @@ function parseCboe(json, requestedSymbol) {
     symbol: String(data.symbol || requestedSymbol).replace(/^_/, '').replace(/^\^/, ''),
     spot,
     timestamp: json.timestamp || new Date().toISOString(),
-    source: 'CBOE delayed quotes',
+    source: json._source || 'CBOE delayed quotes',
     options,
   };
 }

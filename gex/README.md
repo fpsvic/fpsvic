@@ -17,13 +17,31 @@ quotes need the little server because browsers block cross-origin requests to CB
 
 ## Where the data comes from
 
-CBOE publishes its **delayed quotes API** for free:
+**CBOE delayed quotes (default).** CBOE publishes this API for free:
 `https://cdn.cboe.com/api/global/delayed_quotes/options/_SPX.json` (indexes use a `_`
 prefix; equities/ETFs like `SPY.json` don't). Each response contains the full options
 chain — every strike and expiry with open interest, volume, IV, and greeks — delayed
 about 15 minutes. `server.js` proxies and caches it for 60 seconds.
 
 Works with SPX, SPY, QQQ, IWM, NDX, RUT, VIX, and any US ticker with listed options.
+
+**Tradier (optional).** If you have a Tradier account, the same dashboard can pull from
+Tradier's market-data API instead:
+
+```bash
+TRADIER_TOKEN=your-api-token node gex/server.js
+```
+
+- Works with a brokerage API token, or a free [developer sandbox](https://documentation.tradier.com/)
+  token (`TRADIER_SANDBOX=1` switches to the sandbox host).
+- Quotes/spot are real-time on brokerage tokens (vs CBOE's 15-minute delay).
+- Greeks and IV come from ORATS and refresh roughly hourly — fine for GEX, since open
+  interest (the other big input) only updates daily anyway.
+- Big chains like SPX have dozens of expirations, each a separate API call; the server
+  pulls the nearest 12 by default (`TRADIER_MAX_EXPIRIES=20` to raise it) to stay well
+  inside Tradier's rate limits. Responses are normalized to the CBOE payload shape, so
+  the frontend is source-agnostic.
+- `?source=cboe` / `?source=tradier` on `/api/chain` forces a source per request.
 
 ## What it shows
 
