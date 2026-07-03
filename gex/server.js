@@ -625,6 +625,50 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(row));
   }
 
+  // One snapshot for the 3D "brain" mesh: strike x expiry-band net GEX grid
+  // plus the same landmark levels the dashboard shows (walls, flip, net GEX).
+  // Reuses the exact chain fetch/cache/parse path as /api/chain, so it never
+  // drifts from the numbers the dashboard computes for the same ticker.
+  if (url.pathname === '/api/brain') {
+    const symbol = String(url.searchParams.get('symbol') || '').toUpperCase().replace(/[^A-Z^_.]/g, '');
+    const source = { tradier: 'tradier', cboe: 'cboe' }[url.searchParams.get('source')] || '';
+    if (!symbol) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'missing ?symbol=' }));
+    }
+    try {
+      const body = await fetchChain(symbol, source);
+      const chain = GexExposure.parseCboe(JSON.parse(body), symbol);
+      const overall = GexExposure.computeMetrics(chain, 'all');
+      const mesh = GexExposure.computeMeshBands(chain);
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({
+        symbol: chain.symbol,
+        spot: chain.spot,
+        asof: chain.timestamp,
+        source: chain.source,
+        strikes: mesh.strikes,
+        bands: mesh.bands,
+        landmarks: {
+          callWall: overall.callWall ? overall.callWall.strike : null,
+          putWall: overall.putWall ? overall.putWall.strike : null,
+          flip: overall.flip,
+          vannaFlip: overall.vannaFlip,
+          charmFlip: overall.charmFlip,
+          netGex: overall.netGex,
+          netVanna: overall.netVanna,
+          netCharm: overall.netCharm,
+          // netDelta is restricted to the mesh's +/-rangePct strike window
+          // (computeMetrics has no all-chain net-delta figure to match against)
+          netDelta: mesh.bands.reduce((sum, b) => sum + b.delta.reduce((s, v) => s + v, 0), 0),
+        },
+      }));
+    } catch (err) {
+      res.writeHead(502, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: `could not build brain mesh for ${symbol}: ${err.message}` }));
+    }
+  }
+
   const api = { '/api/chain': true, '/api/history': true, '/api/vix': true }[url.pathname];
   if (api) {
     const symbol = String(url.searchParams.get('symbol') || '').toUpperCase().replace(/[^A-Z^_.]/g, '');

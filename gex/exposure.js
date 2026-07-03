@@ -32,9 +32,21 @@
     return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
   }
 
-  /* Greeks shared by calls and puts (with zero dividend yield):
-   * gamma, vanna (dDelta/dVol, per 1.00 vol), charm (dDelta/dt, per year). */
-  function bsGreeks(S, K, T, sigma) {
+  // same Abramowitz-Stegun approximation GexMetrics.normCdf uses, duplicated
+  // here so bsGreeks' delta stays dependency-free like the rest of this module.
+  function normCdf(x) {
+    if (x < 0) return 1 - normCdf(-x);
+    const t = 1 / (1 + 0.2316419 * x);
+    const poly = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+    return 1 - normPdf(x) * poly;
+  }
+
+  /* Greeks shared by calls and puts (with zero dividend yield), plus delta
+   * (which DOES differ by type — defaults to 'C' so existing call sites that
+   * only want gamma/vanna/charm are unaffected):
+   * gamma, vanna (dDelta/dVol, per 1.00 vol), charm (dDelta/dt, per year),
+   * delta. */
+  function bsGreeks(S, K, T, sigma, type = 'C') {
     const sqT = Math.sqrt(T);
     const d1 = (Math.log(S / K) + (RISK_FREE + 0.5 * sigma * sigma) * T) / (sigma * sqT);
     const d2 = d1 - sigma * sqT;
@@ -42,7 +54,8 @@
     const gamma = pdf / (S * sigma * sqT);
     const vanna = -pdf * d2 / sigma;
     const charm = -pdf * (2 * RISK_FREE * T - d2 * sigma * sqT) / (2 * T * sigma * sqT);
-    return { gamma, vanna, charm };
+    const delta = type === 'P' ? normCdf(d1) - 1 : normCdf(d1);
+    return { gamma, vanna, charm, delta };
   }
 
   // ---------------------------------------------------------------- cboe parsing
@@ -97,10 +110,11 @@
   // ---------------------------------------------------------------- exposure math
 
   function optionGreeks(o, S) {
-    if (o.iv > 0.005) return bsGreeks(S, o.strike, o.T, o.iv);
-    // no usable IV: fall back to the quoted gamma, skip vanna/charm
+    if (o.iv > 0.005) return bsGreeks(S, o.strike, o.T, o.iv, o.type);
+    // no usable IV: fall back to the quoted gamma, skip vanna/charm/delta
+    // (CBOE's payload carries no quoted delta to fall back to)
     const g = isFinite(o.gammaQuoted) ? o.gammaQuoted : 0;
-    return { gamma: g, vanna: 0, charm: 0 };
+    return { gamma: g, vanna: 0, charm: 0, delta: 0 };
   }
 
   function dealerSign(type) { return type === 'C' ? 1 : -1; } // long calls, short puts
@@ -182,6 +196,67 @@
       }
     }
     return flip;
+  }
+
+  // ---------------------------------------------------------------- banded mesh (brain view)
+
+  /* Default expiry bands for the 3D "brain" mesh: near-term structure (0DTE,
+   * weekly) matters strike-by-strike; far-dated OI is sparse and coarser bands
+   * are enough. dte is the same integer field parseCboe already computes. */
+  const DEFAULT_MESH_BANDS = [
+    { name: '0DTE', minDte: 0, maxDte: 1 },
+    { name: 'Weekly', minDte: 2, maxDte: 7 },
+    { name: 'Monthly', minDte: 8, maxDte: 45 },
+    { name: 'LEAP', minDte: 46, maxDte: Infinity },
+  ];
+
+  // one dollar-exposure accumulator map per greek, all keyed by strike
+  function zeroMap(strikes) {
+    return new Map(strikes.map((s) => [s, 0]));
+  }
+
+  /* Strike x expiry-band net GEX/vanna/charm/delta grid for the brain-mesh
+   * visualization — unlike computeMetrics (which collapses every expiry into
+   * one row per strike), this keeps a strike's exposure separate per band so a
+   * strike can be a gyrus at 0DTE and a sulcus at LEAP simultaneously, on any
+   * of the four greeks. Strikes are restricted to +/- rangePct of spot
+   * (matching the profile chart's default window) so a mesh isn't built from
+   * thousands of illiquid deep OTM strikes. Pure given `chain`.
+   *   dollar-delta convention matches gex/vanna/charm: sign * greek * oi *
+   *   CONTRACT_SIZE * S (dealer notional delta from OI at that strike/expiry;
+   *   there is no natural "flip" for it the way there is for gamma/vanna/charm). */
+  function computeMeshBands(chain, bandDefs = DEFAULT_MESH_BANDS, rangePct = PROFILE_RANGE) {
+    const S = chain.spot;
+    const lo = S * (1 - rangePct), hi = S * (1 + rangePct);
+    const strikeSet = new Set();
+    for (const o of chain.options) {
+      if (o.oi > 0 && o.strike >= lo && o.strike <= hi) strikeSet.add(o.strike);
+    }
+    const strikes = [...strikeSet].sort((a, b) => a - b);
+
+    const bands = bandDefs.map((def) => {
+      const gex = zeroMap(strikes), vanna = zeroMap(strikes), charm = zeroMap(strikes), delta = zeroMap(strikes);
+      for (const o of chain.options) {
+        if (o.oi <= 0 || !gex.has(o.strike)) continue;
+        if (o.dte < def.minDte || o.dte > def.maxDte) continue;
+        const gk = optionGreeks(o, S);
+        const sign = dealerSign(o.type);
+        const strike = o.strike;
+        gex.set(strike, gex.get(strike) + sign * gk.gamma * o.oi * CONTRACT_SIZE * S * S * 0.01);
+        vanna.set(strike, vanna.get(strike) + sign * gk.vanna * o.oi * CONTRACT_SIZE * S * 0.01);
+        charm.set(strike, charm.get(strike) + sign * (gk.charm / 365) * o.oi * CONTRACT_SIZE * S);
+        delta.set(strike, delta.get(strike) + sign * gk.delta * o.oi * CONTRACT_SIZE * S);
+      }
+      return {
+        name: def.name,
+        gex: strikes.map((s) => gex.get(s)),
+        vanna: strikes.map((s) => vanna.get(s)),
+        charm: strikes.map((s) => charm.get(s)),
+        delta: strikes.map((s) => delta.get(s)),
+      };
+    });
+
+    return { strikes, bands };
   }
 
   // ---------------------------------------------------------------- volatility & convexity
@@ -364,6 +439,7 @@
     RISK_FREE, CONTRACT_SIZE, PROFILE_POINTS, PROFILE_RANGE, MS_YEAR,
     normPdf, bsGreeks, parseCboe, optionGreeks, dealerSign, computeMetrics, zeroCrossing,
     buildVolMetrics, buildSnapshot, scanRowFromChain,
+    DEFAULT_MESH_BANDS, computeMeshBands,
   };
   root.GexExposure = GexExposure;
   if (typeof module !== 'undefined' && module.exports) module.exports = GexExposure;

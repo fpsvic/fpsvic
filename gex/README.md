@@ -1,13 +1,15 @@
 # Personal GEX
 
 A free, self-hosted gamma-exposure toolkit in the spirit of gexa.ai and gexbot.com —
-built for personal use with zero dependencies and zero data-feed cost. Two views:
+built for personal use with zero dependencies and zero data-feed cost. Three views:
 
 - a **multi-ticker scanner** (`/`) that ranks a watchlist by how mispriced each name's
-  implied vol is, so you can spot top-tier situations across many symbols at once, and
+  implied vol is, so you can spot top-tier situations across many symbols at once,
 - the original **single-ticker dashboard** (`/index.html?symbol=SPX`) — dealer
   gamma/vanna/charm exposure, walls, the zero-gamma flip, the VIX-style vol panel, and
-  the on-demand AI read — that each scanner row click-throughs into.
+  the on-demand AI read — that each scanner row click-throughs into, and
+- the **brain view** (`/brain.html?symbol=SPX`) — a 3D mesh of the whole chain that
+  shows all four greeks at once, built for at-a-glance short-term-trading reads.
 
 ## Quick start
 
@@ -63,7 +65,36 @@ crosses the wire, and the snapshot serializes identically on both sides so the a
 cache is shared. `GEX_NO_LISTEN=1 node gex/scan.test.js` and `node gex/exposure.test.js`
 test the pipeline.
 
-## Where the data comes from
+## The brain view
+
+`/brain.html?symbol=SPX` renders the whole chain as a 3D "brain": four nested dome
+shells — one per expiry band (0DTE / weekly / monthly / LEAP) — each a ring of strike
+nodes, drawn with plain Canvas 2D and a hand-rolled perspective projection (no WebGL,
+no libraries). It exists to answer one question at a glance: *where is the dealer book
+concentrated, and on which greek, right now?*
+
+- **Primary shape.** One greek (gamma by default; vanna/charm/delta selectable) deforms
+  the shells: positive exposure bulges a node outward (a *gyrus* — call-side,
+  dealer-stabilizing for gamma), negative folds it inward (a *sulcus*). Node size and
+  bulge are normalized against the single largest value in the whole mesh, so shell-to-
+  shell differences are honest: far-dated shells genuinely look quiet because they are.
+- **Synapses.** The other three greeks orbit every node as small satellites at fixed
+  angles: color says *which* greek (teal gamma, blue vanna, gold charm, pink delta),
+  filled vs hollow says sign, distance from the node says magnitude. All four greeks are
+  visible simultaneously — switching the primary just re-chooses which one drives the shape.
+- **Landmarks.** A violet spot beam cuts through every shell at the current price;
+  call/put walls get halo rings; the active greek's zero-crossing gets a pulsing flip
+  ring; and spot/walls/flip carry on-mesh price labels with collision avoidance (walls
+  merge into one label when they land on the same strike).
+- **Built for short-term trading.** The camera is static by default (drag to orbit,
+  scroll to zoom — it never drifts on its own), and *near-term focus* (default on) dims
+  the monthly/LEAP shells so 0DTE/weekly gamma dominates the read; one button restores
+  equal prominence.
+- **Data path.** `GET /api/brain?symbol=SYM` returns a strike × expiry-band grid of all
+  four greeks (`GexExposure.computeMeshBands`) plus the landmark levels, reusing the
+  exact chain fetch/cache/parse path as the dashboard — the numbers can never drift
+  between views. The page polls every 20 s and pulses nodes whose exposure moved since
+  the last poll (a live-only stand-in for real history, which doesn't exist yet).
 
 **CBOE delayed quotes (default).** CBOE publishes this API for free:
 `https://cdn.cboe.com/api/global/delayed_quotes/options/_SPX.json` (indexes use a `_`

@@ -68,6 +68,7 @@
     color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--axis);
   }
   .btn:hover { background: var(--mid); }
+  a.btn { text-decoration: none; display: inline-block; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .chipset { display: flex; gap: 4px; align-items: center; }
   .chipset .lbl { color: var(--text-muted); font-size: 12.5px; margin: 0 4px 0 8px; }
@@ -192,6 +193,9 @@
       <button class="chip" data-sym="QQQ">QQQ</button>
       <button class="chip" data-sym="IWM">IWM</button>
     </span>
+    <a class="btn" id="brainLink" href="brain.html?symbol=SPX"
+       onclick="this.href='brain.html?symbol='+encodeURIComponent(document.getElementById('symbol').value.trim().toUpperCase());"
+       title="3D gamma mesh view">🧠 Brain view</a>
     <span class="chipset" id="expchips" role="group" aria-label="Expiry filter">
       <span class="lbl">Expiries</span>
       <button class="chip" data-exp="0"  aria-pressed="false">0DTE</button>

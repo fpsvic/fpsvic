@@ -121,6 +121,14 @@ test('bsGreeks.gamma is positive and peaks near the money', () => {
   assert.ok(g(100) > g(80) && g(100) > g(120), 'gamma peaks ATM');
 });
 
+test('bsGreeks.delta: call delta in (0,1), put delta = call delta - 1, defaults to call', () => {
+  const call = E.bsGreeks(100, 110, 0.25, 0.3, 'C');
+  const put = E.bsGreeks(100, 110, 0.25, 0.3, 'P');
+  assert.ok(call.delta > 0 && call.delta < 1, 'OTM call delta in (0,1)');
+  approx(put.delta, call.delta - 1, 1e-9, 'put delta = call delta - 1');
+  approx(E.bsGreeks(100, 110, 0.25, 0.3).delta, call.delta, 1e-9, 'type defaults to C');
+});
+
 test('dealerSign: long calls (+1), short puts (-1)', () => {
   assert.equal(E.dealerSign('C'), 1);
   assert.equal(E.dealerSign('P'), -1);
@@ -166,6 +174,58 @@ test('computeMetrics respects the maxDte filter', () => {
   const wk = E.computeMetrics(ch, '7');
   const all = E.computeMetrics(ch, 'all');
   assert.ok(wk.optionCount < all.optionCount, 'the 1-week slice drops the 40-day expiry');
+});
+
+// ---------------------------------------------------------------- computeMeshBands
+
+test('computeMeshBands: strikes are restricted to the range window and sorted', () => {
+  const ch = E.parseCboe(flatCboe({ S: 100, lo: 60, hi: 140, step: 1 }), 'TEST', NOW);
+  const mesh = E.computeMeshBands(ch, E.DEFAULT_MESH_BANDS, 0.10);
+  assert.ok(mesh.strikes.length > 0);
+  assert.ok(mesh.strikes[0] >= 90 && mesh.strikes[mesh.strikes.length - 1] <= 110, 'strikes stay within +/-10%');
+  for (let i = 1; i < mesh.strikes.length; i++) assert.ok(mesh.strikes[i] > mesh.strikes[i - 1], 'strikes sorted ascending');
+});
+
+test('computeMeshBands: a band with no options in range is all zeros, and gex re-sums to computeMetrics-style net GEX', () => {
+  // flatCboe is symmetric call/put OI, which cancels exactly (BS gamma is
+  // identical for a call and put at the same strike/expiry) — bias the puts
+  // so the Monthly band has a real nonzero signal to check.
+  const ch = E.parseCboe(twoLegged(200, 500, { S: 100, K: 102, dte: 40 }), 'XYZ', NOW);
+  const mesh = E.computeMeshBands(ch, E.DEFAULT_MESH_BANDS, 0.10);
+  const zeroDte = mesh.bands.find((b) => b.name === '0DTE');
+  assert.ok(zeroDte.gex.every((v) => v === 0), '~40dte-only chain contributes nothing to the 0DTE band');
+  assert.ok(zeroDte.vanna.every((v) => v === 0) && zeroDte.charm.every((v) => v === 0) && zeroDte.delta.every((v) => v === 0));
+  const monthly = mesh.bands.find((b) => b.name === 'Monthly');
+  assert.ok(monthly.gex.some((v) => v !== 0), 'the ~40dte options land in the Monthly band');
+  assert.ok(monthly.vanna.some((v) => v !== 0), 'vanna is populated alongside gex');
+  assert.ok(monthly.charm.some((v) => v !== 0), 'charm is populated alongside gex');
+  assert.ok(monthly.delta.some((v) => v !== 0), 'delta is populated alongside gex');
+  const bandTotal = mesh.bands.reduce((sum, b) => sum + b.gex.reduce((s, v) => s + v, 0), 0);
+  const all = E.computeMetrics(ch, 'all').strikes
+    .filter((r) => r.strike >= mesh.strikes[0] && r.strike <= mesh.strikes[mesh.strikes.length - 1])
+    .reduce((s, r) => s + r.gex, 0);
+  approx(bandTotal, all, Math.abs(all) * 1e-6 + 1e-6, 'mesh bands re-sum to the same net gex as computeMetrics over the same strikes');
+});
+
+test('computeMeshBands: distinct bands can disagree in sign at the same strike, on every greek (a strike can be gyrus and sulcus at once)', () => {
+  const S = 100, K = 105;
+  const near = twoLegged(0, 500, { S, K, dte: 0 });   // near-term (lands in 0DTE): put-heavy at 105 -> negative
+  const far = twoLegged(500, 0, { S, K, dte: 40 });   // far-term (lands in Monthly): call-heavy at 105 -> positive
+  near.data.options.push(...far.data.options);
+  const ch = E.parseCboe(near, 'XYZ', NOW);
+  const mesh = E.computeMeshBands(ch, E.DEFAULT_MESH_BANDS, 0.10);
+  const idx = mesh.strikes.indexOf(K);
+  assert.ok(idx >= 0);
+  const zeroDte = mesh.bands.find((b) => b.name === '0DTE');
+  const monthly = mesh.bands.find((b) => b.name === 'Monthly');
+  assert.ok(zeroDte.gex[idx] < 0, '0DTE band is put-heavy (sulcus) on gamma at strike 105');
+  assert.ok(monthly.gex[idx] > 0, 'Monthly band is call-heavy (gyrus) on gamma at the same strike');
+  // delta: dealer is short 500 puts near-term (put delta is negative, so
+  // -1 * negative -> positive dealer delta) and long 500 calls far-term
+  // (+1 * positive -> positive dealer delta) — both land long delta here,
+  // unlike gamma, illustrating the greeks are genuinely independent per band.
+  assert.ok(zeroDte.delta[idx] > 0, '0DTE band: short puts -> dealer long delta');
+  assert.ok(monthly.delta[idx] > 0, 'Monthly band: long calls -> dealer long delta');
 });
 
 // ---------------------------------------------------------------- buildVolMetrics
