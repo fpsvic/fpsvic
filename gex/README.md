@@ -26,11 +26,15 @@ about 15 minutes. `server.js` proxies and caches it for 60 seconds.
 Works with SPX, SPY, QQQ, IWM, NDX, RUT, VIX, and any US ticker with listed options.
 
 **Tradier (optional).** If you have a Tradier account, the same dashboard can pull from
-Tradier's market-data API instead:
+Tradier's market-data API instead. Put your token in a `.env` file:
 
 ```bash
-TRADIER_TOKEN=your-api-token node gex/server.js
+cp gex/.env.example gex/.env   # then edit gex/.env and paste your token
+node gex/server.js
 ```
+
+or pass it inline (`TRADIER_TOKEN=your-api-token node gex/server.js`). `gex/.env` is
+gitignored, and real environment variables override it.
 
 - Works with a brokerage API token, or a free [developer sandbox](https://documentation.tradier.com/)
   token (`TRADIER_SANDBOX=1` switches to the sandbox host).

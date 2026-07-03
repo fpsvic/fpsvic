@@ -26,8 +26,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const PORT = Number(process.env.PORT || 8787);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
+
+/* Load gex/.env if present (simple KEY=value lines, # comments ignored) so the
+ * Tradier token doesn't have to live in the shell. Real env vars win. */
+try {
+  for (const line of fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split('\n')) {
+    const m = /^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
+    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^(["'])(.*)\1$/, '$2');
+  }
+} catch { /* no .env file — fine */ }
+
+const PORT = Number(process.env.PORT || 8787);
 const CACHE_MS = 60_000;
 
 const CBOE = 'https://cdn.cboe.com/api/global/delayed_quotes/options/';
