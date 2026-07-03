@@ -29,12 +29,25 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
-/* Load gex/.env if present (simple KEY=value lines, # comments ignored) so the
- * Tradier token doesn't have to live in the shell. Real env vars win. */
+/* Load gex/.env if present (simple KEY=value lines, # comments ignored). Real
+ * env vars win for ordinary settings, but for CREDENTIALS the file wins:
+ * Windows terminals keep the environment they were opened with, so a stale
+ * token lingering in an old window would silently shadow a freshly rotated
+ * key in gex/.env — the file is the single source of truth for secrets. */
 try {
+  const ENV_FILE_WINS = new Set(['TRADIER_TOKEN', 'ANTHROPIC_API_KEY']);
   for (const line of fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split('\n')) {
     const m = /^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
-    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^(["'])(.*)\1$/, '$2');
+    if (!m) continue;
+    const key = m[1];
+    const value = m[2].replace(/^(["'])(.*)\1$/, '$2');
+    if (!value) continue;
+    if (!(key in process.env)) {
+      process.env[key] = value;
+    } else if (ENV_FILE_WINS.has(key) && process.env[key] !== value) {
+      console.warn(`[gex] ${key}: shell environment holds a different value than gex/.env — using gex/.env`);
+      process.env[key] = value;
+    }
   }
 } catch { /* no .env file — fine */ }
 
@@ -541,7 +554,12 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(404, { 'content-type': 'text/plain' });
     return res.end('not found');
   }
-  res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' });
+  // no-cache: browsers otherwise heuristically cache app.js/index.html and can
+  // serve a stale mix of old and new code after an upgrade (blank/broken page)
+  res.writeHead(200, {
+    'content-type': MIME[path.extname(file)] || 'application/octet-stream',
+    'cache-control': 'no-cache',
+  });
   fs.createReadStream(file).pipe(res);
 });
 
