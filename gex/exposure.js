@@ -154,10 +154,14 @@
 
   function dealerSign(type) { return type === 'C' ? 1 : -1; } // long calls, short puts
 
-  function computeMetrics(ch, maxDte) {
+  /* minDte is optional (defaults unbounded below) so a single expiry band can
+   * be metered in isolation — per-band walls/flip for the brain view. Existing
+   * two-argument callers are unaffected. */
+  function computeMetrics(ch, maxDte, minDte) {
     const S = ch.spot;
+    const dteLo = minDte == null ? -Infinity : +minDte;
     // exposure math wants open interest; zero-OI quoted options exist only for the vol calcs
-    const opts = ch.options.filter((o) => o.oi > 0 && (maxDte === 'all' || o.dte <= +maxDte));
+    const opts = ch.options.filter((o) => o.oi > 0 && (maxDte === 'all' || o.dte <= +maxDte) && o.dte >= dteLo);
 
     const byStrike = new Map();
     let netGex = 0, netVanna = 0, netCharm = 0;
@@ -184,10 +188,14 @@
 
     const strikes = [...byStrike.values()].sort((a, b) => a.strike - b.strike);
 
+    // a wall requires a genuine signal on its own side: a book with zero call
+    // gamma has no call wall (routine for one-sided per-band slices — a
+    // puts-only 0DTE book must not report its largest-put strike as a "call
+    // wall" just because every candidate ties at zero)
     let callWall = null, putWall = null;
     for (const r of strikes) {
-      if (!callWall || r.callGex > callWall.callGex) callWall = r;
-      if (!putWall || r.putGex < putWall.putGex) putWall = r;
+      if (r.callGex > 0 && (!callWall || r.callGex > callWall.callGex)) callWall = r;
+      if (r.putGex < 0 && (!putWall || r.putGex < putWall.putGex)) putWall = r;
     }
 
     // gamma / vanna / charm profiles: net exposures recomputed at hypothetical spot levels
@@ -296,6 +304,26 @@
     });
 
     return { strikes, bands };
+  }
+
+  /* Per-band landmark levels: walls, flip, and net GEX computed from ONLY the
+   * options inside each expiry band — the honest counterpart to the all-expiry
+   * aggregates. On expiry days the gap between the 0DTE flip and the aggregate
+   * flip is exactly what a short-term trader wants to see. Bands with no open
+   * interest return null walls/flip and optionCount 0 so the UI can skip them
+   * rather than draw a landmark that doesn't exist. */
+  function computeBandLandmarks(chain, bandDefs = DEFAULT_MESH_BANDS) {
+    return bandDefs.map((def) => {
+      const m = computeMetrics(chain, def.maxDte === Infinity ? 'all' : def.maxDte, def.minDte);
+      return {
+        name: def.name,
+        netGex: m.netGex,
+        callWall: m.callWall ? m.callWall.strike : null,
+        putWall: m.putWall ? m.putWall.strike : null,
+        flip: m.flip,
+        optionCount: m.optionCount,
+      };
+    });
   }
 
   // ---------------------------------------------------------------- volatility & convexity
@@ -478,7 +506,7 @@
     RISK_FREE, CONTRACT_SIZE, PROFILE_POINTS, PROFILE_RANGE, MS_YEAR,
     normPdf, bsGreeks, parseCboe, optionGreeks, dealerSign, computeMetrics, zeroCrossing,
     buildVolMetrics, buildSnapshot, scanRowFromChain,
-    DEFAULT_MESH_BANDS, computeMeshBands, nyCloseUtc,
+    DEFAULT_MESH_BANDS, computeMeshBands, computeBandLandmarks, nyCloseUtc,
   };
   root.GexExposure = GexExposure;
   if (typeof module !== 'undefined' && module.exports) module.exports = GexExposure;

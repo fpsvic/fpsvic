@@ -156,6 +156,25 @@
   }
   .focus-btn:hover{ color:var(--text); border-color:var(--faint); }
   .focus-btn[aria-pressed="true"]{ color:var(--call); border-color:rgba(53,214,176,0.4); }
+  .band-tag .bnet{ font-size:10px; margin-left:2px; color:var(--faint); }
+  .bnet.call{ color:var(--call); }
+  .bnet.put{ color:var(--put); }
+
+  #tip{
+    position:fixed; display:none; z-index:7; pointer-events:none;
+    background:rgba(16,22,29,0.94); border:1px solid var(--panel-border); border-radius:7px;
+    padding:9px 11px; min-width:158px; backdrop-filter:blur(6px);
+  }
+  .tip-head{
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-size:11px; letter-spacing:0.06em; color:var(--text); font-weight:700; margin-bottom:6px;
+  }
+  .tip-row{ display:flex; align-items:center; gap:7px; padding:2px 0; font-size:11px; }
+  .tip-dot{ width:6px; height:6px; border-radius:50%; flex:none; box-shadow:0 0 5px 1px currentColor; }
+  .tip-name{ color:var(--muted); flex:1; }
+  .tip-val{ font-weight:600; }
+  .tip-val.call{ color:var(--call); }
+  .tip-val.put{ color:var(--put); }
 
   #status{
     position:fixed; top:16px; right:22px;
@@ -205,12 +224,14 @@
 <div class="hud" id="banner"></div>
 
 <div class="hud" id="bands">
-  <div class="band-tag"><span class="dot" style="background:#3a4a58"></span>0DTE — inner shell</div>
-  <div class="band-tag"><span class="dot" style="background:#4a5c6c"></span>WEEKLY</div>
-  <div class="band-tag"><span class="dot" style="background:#5a6e80"></span>MONTHLY</div>
-  <div class="band-tag"><span class="dot" style="background:#6a8094"></span>LEAP — outer shell</div>
+  <div class="band-tag"><span class="dot" style="background:#3a4a58"></span>0DTE — inner shell <span class="bnet mono" id="bnet-0DTE"></span></div>
+  <div class="band-tag"><span class="dot" style="background:#4a5c6c"></span>WEEKLY <span class="bnet mono" id="bnet-Weekly"></span></div>
+  <div class="band-tag"><span class="dot" style="background:#5a6e80"></span>MONTHLY <span class="bnet mono" id="bnet-Monthly"></span></div>
+  <div class="band-tag"><span class="dot" style="background:#6a8094"></span>LEAP — outer shell <span class="bnet mono" id="bnet-LEAP"></span></div>
   <button id="focusToggle" class="focus-btn" aria-pressed="true">Near-term focus: ON</button>
 </div>
+
+<div id="tip"></div>
 
 <div class="hud" id="legend">
   <h2>Reading the mesh</h2>
@@ -219,6 +240,7 @@
   <div class="legend-row"><span class="swatch" style="background:var(--spot);color:var(--spot)"></span><span class="label"><b>Spot beam</b> — current price, cuts through every expiry shell</span></div>
   <div class="legend-row"><span class="swatch" style="background:var(--call);color:var(--call)"></span><span class="label"><b>Wall beams</b> — call wall (teal) / put wall (orange), all-expiry levels</span></div>
   <div class="legend-row" id="legendFlipRow"><span class="swatch" style="background:var(--flip);color:var(--flip)"></span><span class="label"><b id="legendFlipWord">Flip beam</b> <span id="legendFlipDesc">— zero-gamma crossing, all expiries</span></span></div>
+  <div class="legend-row"><span class="swatch satellite" style="background:#8fa0b0;color:#8fa0b0"></span><span class="label"><b>Ring markers</b> — that band's OWN wall (○ teal/orange) and flip (◇), on its own shell</span></div>
   <div class="legend-sep"></div>
   <div class="legend-row"><span class="swatch satellite" style="background:#aeb8c2;color:#aeb8c2"></span><span class="label"><b>Synapses</b> — the other three greeks, orbiting each node at a fixed spot: color = which greek, filled = positive, hollow ring = negative, distance = magnitude</span></div>
   <div class="legend-row" id="satLegendRow"></div>
@@ -235,7 +257,7 @@
   <div id="satStats"></div>
 </div>
 
-<div class="hud" id="caption">drag to orbit &middot; scroll to zoom &middot; <b>polling every 20s</b></div>
+<div class="hud" id="caption">hover a node for values &middot; click to pin &middot; drag to orbit &middot; scroll to zoom &middot; <b>polling every 20s</b></div>
 
 <script src="brain.js"></script>
 </body>

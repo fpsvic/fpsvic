@@ -15,6 +15,18 @@ the same batch: every fresh brain build lands in `gex/data/brain/` (gitignored;
 `GEX_NO_ARCHIVE=1` to disable). Still open from fix-first: #6
 (node tooltip), #9 (synapse sign legibility), #10 (strike ticks), #12–15, rest of #16.
 
+**Status 2026-07-03, node inspection (fix-first #6) + per-band landmarks (roadmap #3): landed.**
+Hover any node for strike/band + all four raw dollar exposures (DOM tooltip, color-coded
+per greek, primary marked "(shape)"); click to PIN — pinned nodes keep ring + tooltip
+across polls with live-updating values, dropped if the strike leaves the mesh.
+`computeBandLandmarks` (exposure.js, via a new `minDte` bound on `computeMetrics`)
+computes each band's OWN walls/flip/net from only that band's options; served as
+`bandLandmarks` in /api/brain, drawn as ring markers (○ wall, ◇ flip) on each band's own
+shell, with per-band net GEX in the top-left band key. On real SPX data the per-band
+flips (Weekly 7472, Monthly 7469) visibly diverge from the aggregate flip (7436) —
+exactly the gap this feature exists to show. Remaining from fix-first: #9 (synapse sign
+legibility — partially improved), #10 (strike ticks), #12–15, rest of #16.
+
 **Status 2026-07-03, macro view (roadmap #5): landed.** `gex/macro.html` + `gex/macro.js`:
 one mini-brain per watchlist ticker (watchlist shared with the scanner via the same
 localStorage key), regime-tinted cards with net-GEX/flip/wall stats and Δ-net-GEX mover

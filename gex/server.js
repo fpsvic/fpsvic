@@ -683,6 +683,7 @@ const server = http.createServer(async (req, res) => {
         const chain = GexExposure.parseCboe(JSON.parse(chainBody), symbol, now);
         const overall = GexExposure.computeMetrics(chain, 'all');
         const mesh = GexExposure.computeMeshBands(chain);
+        const bandLm = GexExposure.computeBandLandmarks(chain);
         // dollar exposures round to whole dollars, price levels to cents —
         // halves the payload and keeps archived snapshots diff-friendly
         const r2 = (v) => (v == null || !isFinite(v) ? null : Math.round(v * 100) / 100);
@@ -714,6 +715,16 @@ const server = http.createServer(async (req, res) => {
             // mesh's +/-rangePct strike window like the per-node values
             netDelta: rInt(mesh.bands.reduce((sum, b) => sum + b.delta.reduce((s, v) => s + v, 0), 0)),
           },
+          // per-band walls/flip/net from ONLY that band's options — the honest
+          // per-expiry counterpart to the aggregate landmarks above
+          bandLandmarks: bandLm.map((b) => ({
+            name: b.name,
+            netGex: rInt(b.netGex),
+            callWall: b.callWall,
+            putWall: b.putWall,
+            flip: r2(b.flip),
+            n: b.optionCount,
+          })),
         });
         archiveBrainSnapshot(chain.symbol, payload, now, chain.source);
         return payload;

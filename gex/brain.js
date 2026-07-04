@@ -197,7 +197,8 @@
 
     var prevForGreek = prevValues[greekKey] || new Map();
     var nodes = [];
-    var nodeGrid = {};
+    var nodeGrid = {};    // band_INDEX -> node: build-internal (edges), index-stable within one scene
+    var nodeByPrice = {}; // band_STRIKE -> node: cross-poll identity (hover/pin), strike prices survive window shifts
     var nextValues = new Map();
     var maxPulse = 0;
 
@@ -241,6 +242,8 @@
           z: r * Math.cos(meta.phi) * Math.cos(theta),
           band: band.name, si: si, strike: strikes[si], g: g, raw: raw,
           gMag: Math.min(1, Math.abs(g)),
+          // all four raw dollar exposures, for the inspect tooltip
+          raws: { gamma: band.gex[si], vanna: band.vanna[si], charm: band.charm[si], delta: band.delta[si] },
           pulseAmt: pulseAmt,
           satellites: satellites,
           // filled per applyDerived(): emph, drawBase, sprite
@@ -250,6 +253,7 @@
         };
         nodes.push(node);
         nodeGrid[band.name + '_' + si] = node;
+        nodeByPrice[band.name + '_' + strikes[si]] = node;
       });
     });
     prevValues[greekKey] = nextValues;
@@ -324,9 +328,31 @@
     }
     if (meta.flipLabel) addBeam(meta.flipLabel.toUpperCase(), flipPrice, [230, 236, 242], { labelEnd: 'bottom' });
 
+    // per-band landmark markers: that band's OWN wall/flip drawn on its own
+    // ring at the shell's baseline radius — the honest per-expiry levels next
+    // to the all-expiry beams. Off-mesh or empty-band values are skipped, not
+    // snapped.
+    var bandMarkers = [];
+    (payload.bandLandmarks || []).forEach(function (bl) {
+      var bm = BAND_META[bl.name];
+      if (!bm || !bl.n) return;
+      [['callWall', bl.callWall], ['putWall', bl.putWall], ['flip', bl.flip]].forEach(function (kv) {
+        var idx = fracIdx(kv[1]);
+        if (idx == null || !isFinite(idx)) return;
+        var theta = (idx / Math.max(1, strikes.length - 1) - 0.5) * THETA_SPAN;
+        bandMarkers.push({
+          band: bl.name, kind: kv[0], price: kv[1],
+          x: bm.radius * Math.cos(bm.phi) * Math.sin(theta),
+          y: bm.radius * Math.sin(bm.phi) - bm.tilt,
+          z: bm.radius * Math.cos(bm.phi) * Math.cos(theta),
+          px: 0, py: 0,
+        });
+      });
+    });
+
     var built = {
-      nodes: nodes, ringEdges: ringEdges, radialEdges: radialEdges, nodeGrid: nodeGrid,
-      beams: beams, strikes: strikes, spot: payload.spot,
+      nodes: nodes, ringEdges: ringEdges, radialEdges: radialEdges, nodeGrid: nodeGrid, nodeByPrice: nodeByPrice,
+      beams: beams, bandMarkers: bandMarkers, strikes: strikes, spot: payload.spot,
       sorted: nodes.slice(),      // depth order, re-sorted on camera change
       edgeBuckets: [],            // filled by applyDerived
       maxPulse: maxPulse,
@@ -398,32 +424,155 @@
     requestRender();
   });
 
+  // ---------------------------------------------------------------- node inspection (hover + pin)
+  // Hover any node for its strike, band, and all four raw dollar exposures;
+  // click to PIN it — a pinned node keeps its ring + tooltip across polls,
+  // re-resolved by band + STRIKE PRICE so the values update live for the SAME
+  // strike (the ±10% window slides with spot, so indices don't survive polls),
+  // until you click it again, click empty space, or the strike leaves the mesh.
+  var tipEl = document.getElementById('tip');
+  var hoverKey = null, pinnedKey = null;
+  var lastPtrX = -1e9, lastPtrY = -1e9; // last idle pointer position, for hover re-validation after camera/scene changes
+
+  function nodeKey(node) { return node.band + '_' + node.strike; }
+
+  function tipTargetNode() {
+    var key = pinnedKey || hoverKey;
+    return key && scene ? (scene.nodeByPrice[key] || null) : null;
+  }
+
+  function hitNode(clientX, clientY) {
+    if (!scene) return null;
+    var x = clientX * DPR, y = clientY * DPR;
+    var best = null, bestD2 = Math.pow(11 * DPR, 2);
+    var nodes = scene.nodes;
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      var dx = n.px - x, dy = n.py - y;
+      var d2 = dx * dx + dy * dy;
+      if (d2 < bestD2 || (d2 === bestD2 && best && n.pz < best.pz)) { best = n; bestD2 = d2; }
+    }
+    return best;
+  }
+
+  function updateTip() {
+    var node = tipTargetNode();
+    if (!node) {
+      tipEl.style.display = 'none';
+      requestRender(); // clear a lingering highlight ring
+      return;
+    }
+    tipEl.replaceChildren();
+    var head = document.createElement('div');
+    head.className = 'tip-head';
+    head.textContent = fmtPrice(node.strike) + ' · ' + node.band + (pinnedKey ? ' · PINNED' : '');
+    tipEl.append(head);
+    GREEK_ORDER.forEach(function (k) {
+      var m = GREEK_META[k];
+      var row = document.createElement('div');
+      row.className = 'tip-row';
+      var dot = document.createElement('span');
+      dot.className = 'tip-dot';
+      var css = 'rgb(' + m.dotColor.join(',') + ')';
+      dot.style.background = css;
+      dot.style.color = css;
+      var name = document.createElement('span');
+      name.className = 'tip-name';
+      name.textContent = m.short + (k === activeGreek ? ' (shape)' : '');
+      var val = document.createElement('span');
+      var v = node.raws[k];
+      val.className = 'tip-val mono ' + (v >= 0 ? 'call' : 'put');
+      val.textContent = fmtGex(v);
+      row.append(dot, name, val);
+      tipEl.append(row);
+    });
+    tipEl.style.display = 'block';
+    positionTip(node);
+    requestRender(); // draw the highlight ring
+  }
+
+  function positionTip(node) {
+    if (tipEl.style.display === 'none') return;
+    var x = node.px / DPR + 16, y = node.py / DPR - 10;
+    var w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+    if (x + w > window.innerWidth - 8) x = node.px / DPR - w - 16;
+    if (y + h > window.innerHeight - 8) y = window.innerHeight - h - 8;
+    if (y < 8) y = 8;
+    tipEl.style.left = x + 'px';
+    tipEl.style.top = y + 'px';
+  }
+
+  // after a scene rebuild: drop a pin whose strike left the mesh window, and
+  // refresh the tooltip so pinned values track the live book
+  function reconcileTip() {
+    if (pinnedKey && (!scene || !scene.nodeByPrice[pinnedKey])) pinnedKey = null;
+    if (hoverKey && (!scene || !scene.nodeByPrice[hoverKey])) hoverKey = null;
+    if (pinnedKey || hoverKey) updateTip(); else tipEl.style.display = 'none';
+  }
+
   // ---------------------------------------------------------------- camera / interaction
   // Static by default (trading tool, not a screensaver) — a steeper top-down
   // tilt than the original demo angle so the concentric strike rings read
   // clearly at a glance instead of edge-on. Rotation only ever happens from an
-  // explicit drag; it never auto-resumes.
+  // explicit drag; it never auto-resumes. A press that moves less than a few
+  // pixels is a CLICK (pin/unpin a node), not a drag.
   var rotY = 0.32, rotX = -0.72;
-  var dragging = false, lastX = 0, lastY = 0, zoom = 1;
+  var dragging = false, lastX = 0, lastY = 0, zoom = 1, dragDist = 0;
 
   canvas.addEventListener('pointerdown', function (e) {
     dragging = true;
+    dragDist = 0;
     lastX = e.clientX; lastY = e.clientY;
     canvas.classList.add('dragging');
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', function (e) {
-    if (!dragging) return;
-    var dx = e.clientX - lastX, dy = e.clientY - lastY;
-    lastX = e.clientX; lastY = e.clientY;
-    rotY += dx * 0.006;
-    rotX = Math.max(-1.1, Math.min(1.1, rotX + dy * 0.006));
-    cameraDirty = true;
-    requestRender();
+    lastPtrX = e.clientX; lastPtrY = e.clientY;
+    if (dragging) {
+      var dx = e.clientX - lastX, dy = e.clientY - lastY;
+      lastX = e.clientX; lastY = e.clientY;
+      dragDist += Math.abs(dx) + Math.abs(dy);
+      rotY += dx * 0.006;
+      rotX = Math.max(-1.1, Math.min(1.1, rotX + dy * 0.006));
+      cameraDirty = true;
+      requestRender();
+      return;
+    }
+    // idle pointer: hover inspection
+    var node = hitNode(e.clientX, e.clientY);
+    var key = node ? nodeKey(node) : null;
+    canvas.style.cursor = key ? 'pointer' : '';
+    if (key !== hoverKey) {
+      hoverKey = key;
+      if (!pinnedKey) updateTip(); // a pin owns the tooltip until cleared
+    }
   });
-  function endDrag() { dragging = false; canvas.classList.remove('dragging'); }
-  canvas.addEventListener('pointerup', endDrag);
-  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('pointerup', function (e) {
+    if (!dragging) return; // release of a press that never started on the canvas
+    var wasDrag = dragDist >= 5;
+    dragging = false;
+    canvas.classList.remove('dragging');
+    if (wasDrag) return; // the post-drag hover re-validation happens in draw()
+    var node = hitNode(e.clientX, e.clientY);
+    if (node) {
+      var key = nodeKey(node);
+      pinnedKey = pinnedKey === key ? null : key;
+    } else {
+      pinnedKey = null;
+    }
+    updateTip();
+  });
+  canvas.addEventListener('pointercancel', function () {
+    dragging = false;
+    canvas.classList.remove('dragging');
+  });
+  canvas.addEventListener('pointerleave', function () {
+    lastPtrX = -1e9; lastPtrY = -1e9;
+    if (dragging) return;
+    hoverKey = null;
+    canvas.style.cursor = '';
+    if (!pinnedKey) updateTip();
+  });
   canvas.addEventListener('wheel', function (e) {
     e.preventDefault();
     zoom = Math.max(0.55, Math.min(2.2, zoom * (1 - e.deltaY * 0.001)));
@@ -503,6 +652,7 @@
     scene.beams.forEach(function (beam) {
       beam.points.forEach(function (p) { projectInto(p); });
     });
+    scene.bandMarkers.forEach(function (mk) { projectInto(mk); });
     // painter's algorithm: larger z is FARTHER under this projection
     // (f = focal/(focal+z)), so draw order is descending z — far first
     scene.sorted.sort(function (a, b) { return b.pz - a.pz; });
@@ -614,7 +764,46 @@
       }
     }
 
-    // 5) on-mesh price labels, one per beam, anchored at the beam's chosen
+    // 5) per-band landmark markers on their own shells: ○ = that band's wall
+    // (teal call / orange put), ◇ = that band's flip
+    for (var bi = 0; bi < scene.bandMarkers.length; bi++) {
+      var mk = scene.bandMarkers[bi];
+      if (!isFinite(mk.px) || !isFinite(mk.py)) continue;
+      var mEmph = emphasisFor(mk.band);
+      var mr = 3.4 * DPR;
+      ctx.beginPath();
+      if (mk.kind === 'flip') {
+        ctx.strokeStyle = 'rgba(230,236,242,' + (0.75 * mEmph).toFixed(3) + ')';
+        ctx.lineWidth = 1.1 * DPR;
+        ctx.moveTo(mk.px, mk.py - mr);
+        ctx.lineTo(mk.px + mr, mk.py);
+        ctx.lineTo(mk.px, mk.py + mr);
+        ctx.lineTo(mk.px - mr, mk.py);
+        ctx.closePath();
+      } else {
+        ctx.strokeStyle = mk.kind === 'callWall'
+          ? 'rgba(53,214,176,' + (0.8 * mEmph).toFixed(3) + ')'
+          : 'rgba(255,122,82,' + (0.8 * mEmph).toFixed(3) + ')';
+        ctx.lineWidth = 1.2 * DPR;
+        ctx.arc(mk.px, mk.py, mr, 0, Math.PI * 2);
+      }
+      ctx.stroke();
+    }
+
+    // 6) inspect highlight: ring around the hovered/pinned node, and keep the
+    // DOM tooltip glued to it as the camera moves
+    var focusNode = tipTargetNode();
+    if (focusNode) {
+      var hr = Math.max(6 * DPR, focusNode.drawBase * DPR * focusNode.pk * 2.2);
+      ctx.beginPath();
+      ctx.strokeStyle = pinnedKey ? 'rgba(244,247,250,0.95)' : 'rgba(244,247,250,0.55)';
+      ctx.lineWidth = (pinnedKey ? 1.6 : 1.1) * DPR;
+      ctx.arc(focusNode.px, focusNode.py, hr, 0, Math.PI * 2);
+      ctx.stroke();
+      positionTip(focusNode);
+    }
+
+    // 7) on-mesh price labels, one per beam, anchored at the beam's chosen
     // end, with anti-overlap: any label whose anchor lands within ~22px of an
     // already-placed label gets pushed along its own direction until it clears
     var placed = [];
@@ -633,6 +822,20 @@
       placed.push({ x: anchor.px, y: y });
       drawLabel(beam.labelText, anchor.px, y, beam.labelColor);
     });
+
+    // self-healing hover: zoom, drag-end, and scene swaps all move nodes
+    // under a stationary cursor without firing pointermove — re-run the
+    // hit-test against the fresh projections so the ring/tooltip never
+    // linger on a node that is no longer under the pointer
+    if (!dragging && lastPtrX > -1e8) {
+      var hn = hitNode(lastPtrX, lastPtrY);
+      var hk = hn ? nodeKey(hn) : null;
+      if (hk !== hoverKey) {
+        hoverKey = hk;
+        canvas.style.cursor = hk ? 'pointer' : '';
+        if (!pinnedKey) updateTip();
+      }
+    }
 
     window.__gexBrainFrames = (window.__gexBrainFrames || 0) + 1; // perf probe: sample twice to measure real frame activity
   }
@@ -761,6 +964,18 @@
     });
   }
 
+  // per-band net GEX in the top-left band key — the regime split across
+  // expiries at a glance (0DTE can be short-gamma while the LEAPs are long)
+  function updateBandTags(payload) {
+    (payload.bandLandmarks || []).forEach(function (bl) {
+      var el = document.getElementById('bnet-' + bl.name);
+      if (!el) return;
+      if (!bl.n) { el.textContent = '·'; el.className = 'bnet mono'; return; }
+      el.textContent = fmtGex(bl.netGex);
+      el.className = 'bnet mono ' + (bl.netGex >= 0 ? 'call' : 'put');
+    });
+  }
+
   function renderActiveGreek() {
     if (!lastPayload) return;
     var built = buildScene(lastPayload, activeGreek);
@@ -771,6 +986,7 @@
     }
     updateReadout(lastPayload, activeGreek);
     updateLegend(activeGreek);
+    reconcileTip();
     requestRender();
   }
 
@@ -799,7 +1015,9 @@
         throw new Error((json && json.error) || ('HTTP ' + res.status));
       }
       if (sym !== lastBuiltSymbol) {
-        prevValues = {}; // never diff one symbol's strikes against another's
+        prevValues = {};  // never diff one symbol's strikes against another's
+        pinnedKey = null; // a pin names one symbol's strike — it must not survive into another symbol's mesh
+        hoverKey = null;
         lastBuiltSymbol = sym;
       }
       var built = buildScene(json, activeGreek);
@@ -813,6 +1031,8 @@
       document.getElementById('backLink').href = 'index.html?symbol=' + encodeURIComponent(sym);
       updateReadout(json, activeGreek);
       updateLegend(activeGreek);
+      updateBandTags(json);
+      reconcileTip();
       banner('');
       setStatus('live · ' + sym + ' · next refresh in ' + (POLL_MS / 1000) + 's', false);
       requestRender();

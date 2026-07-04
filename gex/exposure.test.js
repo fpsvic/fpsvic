@@ -251,6 +251,47 @@ test('computeMeshBands: distinct bands can disagree in sign at the same strike, 
   assert.ok(monthly.delta[idx] > 0, 'Monthly band: calls only -> positive delta imbalance');
 });
 
+// ---------------------------------------------------------------- computeBandLandmarks
+
+test('computeMetrics minDte bounds the band from below', () => {
+  const p = flatCboe({ dtes: [3, 40] });
+  const ch = E.parseCboe(p, 'TEST', NOW);
+  const near = E.computeMetrics(ch, '7', 0);
+  const far = E.computeMetrics(ch, 'all', 8);
+  const all = E.computeMetrics(ch, 'all');
+  assert.ok(near.optionCount > 0 && far.optionCount > 0);
+  assert.equal(near.optionCount + far.optionCount, all.optionCount, 'disjoint bands partition the book');
+});
+
+test('computeMetrics: a one-sided book has no wall on its empty side', () => {
+  const putsOnly = E.computeMetrics(E.parseCboe(twoLegged(0, 500), 'XYZ', NOW), 'all');
+  assert.equal(putsOnly.callWall, null, 'no call OI -> no call wall, not a zero-tie artifact');
+  assert.ok(putsOnly.putWall, 'the put side is real');
+  const callsOnly = E.computeMetrics(E.parseCboe(twoLegged(500, 0), 'XYZ', NOW), 'all');
+  assert.equal(callsOnly.putWall, null, 'no put OI -> no put wall');
+  assert.ok(callsOnly.callWall, 'the call side is real');
+});
+
+test('computeBandLandmarks: each band gets its own walls from its own options; empty bands return nulls', () => {
+  // near band: call-heavy at 103; far band: put-heavy at 97 — walls must differ per band
+  const near = twoLegged(800, 100, { S: 100, K: 103, dte: 0 });
+  const far = twoLegged(100, 800, { S: 100, K: 97, dte: 40 });
+  near.data.options.push(...far.data.options);
+  const ch = E.parseCboe(near, 'XYZ', NOW);
+  const bands = E.computeBandLandmarks(ch);
+  const b0 = bands.find((b) => b.name === '0DTE');
+  const bm = bands.find((b) => b.name === 'Monthly');
+  const bw = bands.find((b) => b.name === 'Weekly');
+  assert.equal(b0.callWall, 103, '0DTE call wall comes from the near-band book only');
+  assert.equal(bm.putWall, 97, 'Monthly put wall comes from the far-band book only');
+  assert.ok(b0.netGex > 0, 'call-heavy near band is net positive');
+  assert.ok(bm.netGex < 0, 'put-heavy far band is net negative');
+  assert.equal(bw.optionCount, 0, 'weekly band is empty');
+  assert.equal(bw.callWall, null);
+  assert.equal(bw.putWall, null);
+  assert.equal(bw.flip, null);
+});
+
 // ---------------------------------------------------------------- buildVolMetrics
 
 test('buildVolMetrics recovers a flat vol surface and handles missing history', () => {
