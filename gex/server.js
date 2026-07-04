@@ -801,10 +801,15 @@ const server = http.createServer(async (req, res) => {
     const dayParam = String(url.searchParams.get('day') || '');
     const band = String(url.searchParams.get('band') || '');
     const strike = Number(url.searchParams.get('strike'));
-    const greek = { gamma: 'gex', vanna: 'vanna', charm: 'charm', delta: 'delta' }[url.searchParams.get('greek')];
-    if (!symbol || !band || !isFinite(strike) || !greek) {
+    // greek=all returns every greek's series in one pass (the pin compare panel
+    // overlays all four) — one file-read sweep instead of four separate ones
+    const GREEK_FIELDS = { gamma: 'gex', vanna: 'vanna', charm: 'charm', delta: 'delta' };
+    const greekParam = url.searchParams.get('greek');
+    const allGreeks = greekParam === 'all';
+    const greek = allGreeks ? null : GREEK_FIELDS[greekParam];
+    if (!symbol || !band || !isFinite(strike) || (!greek && !allGreeks)) {
       res.writeHead(400, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'need ?symbol=&band=&strike=&greek=gamma|vanna|charm|delta (&day=)' }));
+      return res.end(JSON.stringify({ error: 'need ?symbol=&band=&strike=&greek=gamma|vanna|charm|delta|all (&day=)' }));
     }
     const symDir = path.normalize(path.join(ARCHIVE_DIR, symbol));
     if (!symDir.startsWith(ARCHIVE_DIR + path.sep)) {
@@ -812,7 +817,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: 'bad symbol' }));
     }
     try {
-      const key = `series:${symbol}:${dayParam || 'latest'}:${band}:${strike}:${greek}`;
+      const key = `series:${symbol}:${dayParam || 'latest'}:${band}:${strike}:${allGreeks ? 'all' : greek}`;
       const body = await cached(key, CACHE_MS, async () => {
         let days = [];
         try { days = (await fs.promises.readdir(symDir)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort(); } catch { /* none */ }
@@ -830,13 +835,22 @@ const server = http.createServer(async (req, res) => {
             const snap = JSON.parse(await fs.promises.readFile(path.join(symDir, day, f), 'utf8'));
             const b = (snap.bands || []).find((x) => x.name === band);
             const si = (snap.strikes || []).findIndex((s) => Math.abs(s - strike) < 1e-9);
+            if (allGreeks) {
+              const pt = { t };
+              for (const gname of ['gamma', 'vanna', 'charm', 'delta']) {
+                const arr = b && Array.isArray(b[GREEK_FIELDS[gname]]) ? b[GREEK_FIELDS[gname]] : null;
+                const val = arr && si >= 0 ? arr[si] : null;
+                pt[gname] = val == null || !isFinite(val) ? null : val;
+              }
+              return pt;
+            }
             const v = b && si >= 0 && Array.isArray(b[greek]) ? b[greek][si] : null;
             return { t, v: v == null || !isFinite(v) ? null : v };
           } catch {
-            return { t, v: null }; // unreadable snapshot -> gap, not a dead series
+            return allGreeks ? { t, gamma: null, vanna: null, charm: null, delta: null } : { t, v: null }; // unreadable -> gap
           }
         }));
-        return JSON.stringify({ symbol, day, tag, band, strike, greek: url.searchParams.get('greek'), points });
+        return JSON.stringify({ symbol, day, tag, band, strike, greek: greekParam, points });
       });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return res.end(body);

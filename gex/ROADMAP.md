@@ -16,7 +16,16 @@ symbol change clears pins. Review: 6 raw → 4 distinct confirmed-and-fixed (`#p
 pointer-events:none so unscrollable/click-through; stale playback sparklines; unfinished finite-check
 tint; dead `.tip-spark` CSS). Verified live: pin/unpin/re-click, cap-at-4, sparkline load + greek
 refetch + no same-day-scrub refetch, row-×/clear, symbol-change clear, panel scroll — console clean,
-25 tests green. Remaining candidate: richer sparkline (multi-greek overlay in one pin row).
+25 tests green.
+
+**Multi-greek pin sparkline (2026-07-04, pending commit):** each pin row's sparkline now overlays ALL
+four greeks' day trajectories, each self-normalized to its own range (they differ by orders of
+magnitude, so it compares SHAPE not level), the active greek bold and the others dim. Backed by a new
+server `/api/brain/series?greek=all` mode (one file-read sweep returning `{t,gamma,vanna,charm,delta}`
+per snapshot) so it's one fetch per pin, not four. A greek switch re-emphasizes from stored points
+with NO refetch (the all-greek series is greek-agnostic); day-context change still refetches. The old
+single-greek `drawSpark` was deleted (no callers). Adversarial review: 0 findings. That clears the
+last QoL/presentation candidate on the list.
 
 **Status 2026-07-04, QoL & presentation batches 1–4: landed (on `main`; 1–2 = 301ce9a, 3 = ae9bfb8, 4 = 1a986a6).**
 _Batch 1_ — View-state persistence: active greek + near-term-focus + camera angle serialize to

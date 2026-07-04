@@ -541,11 +541,11 @@
     requestRender(); // draw the hover ring
   }
 
-  function fetchSeries(node) {
+  function fetchSeries(node, greek) {
     var sym = pb.active ? pb.symbol : currentSymbol;
     var q = 'api/brain/series?symbol=' + encodeURIComponent(sym) +
       '&band=' + encodeURIComponent(node.band) + '&strike=' + node.strike +
-      '&greek=' + encodeURIComponent(activeGreek) +
+      '&greek=' + encodeURIComponent(greek || activeGreek) +
       (pb.active ? '&day=' + encodeURIComponent(pb.day) : '');
     return fetch(q, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20000) })
       .then(function (res) {
@@ -556,48 +556,39 @@
       });
   }
 
-  function drawSpark(canvas, points, w, h) {
-    w = w || 150; h = h || 36;
-    canvas.width = w * DPR;
-    canvas.height = h * DPR;
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
+  // Multi-greek pin sparkline: overlay all four greeks' day trajectories, each
+  // in its own greek color and NORMALIZED to its OWN min/max — the greeks differ
+  // by orders of magnitude, so this compares SHAPE (is gamma rising while charm
+  // falls?), not level; the row header still shows the active greek's real value.
+  // The active greek is drawn bold/bright, the others thin/dim.
+  function drawMultiSpark(canvas, points, w, h, emphGreek) {
+    w = w || 200; h = h || 38;
+    canvas.width = w * DPR; canvas.height = h * DPR;
+    canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
     var g = canvas.getContext('2d');
-    var vals = points.map(function (p) { return p.v; }).filter(function (v) { return v != null; });
-    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
-    if (hi === lo) { lo -= 1; hi += 1; }
-    var pad = 3 * DPR;
-    function X(i) { return pad + (i / Math.max(1, points.length - 1)) * (canvas.width - 2 * pad); }
-    function Y(v) { return pad + (1 - (v - lo) / (hi - lo)) * (canvas.height - 2 * pad); }
-
-    if (lo < 0 && hi > 0) { // the sign boundary matters for signed exposures
-      g.strokeStyle = 'rgba(124,138,153,0.4)';
-      g.lineWidth = 1;
-      g.setLineDash([3, 3]);
-      g.beginPath(); g.moveTo(pad, Y(0)); g.lineTo(canvas.width - pad, Y(0)); g.stroke();
-      g.setLineDash([]);
-    }
-    var last = vals[vals.length - 1];
-    var rgb = last >= 0 ? '53,214,176' : '255,122,82';
-    g.strokeStyle = 'rgba(' + rgb + ',0.9)';
-    g.lineWidth = 1.3 * DPR;
-    g.beginPath();
-    var open = false;
-    for (var i = 0; i < points.length; i++) {
-      if (points[i].v == null) { open = false; continue; } // gap: strike outside that snapshot's window
-      if (!open) { g.moveTo(X(i), Y(points[i].v)); open = true; }
-      else g.lineTo(X(i), Y(points[i].v));
-    }
-    g.stroke();
-    for (var j = points.length - 1; j >= 0; j--) {
-      if (points[j].v != null) {
-        g.beginPath();
-        g.fillStyle = 'rgba(' + rgb + ',1)';
-        g.arc(X(j), Y(points[j].v), 2 * DPR, 0, Math.PI * 2);
-        g.fill();
-        break;
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    var pad = 3 * DPR, n = points.length;
+    function X(i) { return pad + (i / Math.max(1, n - 1)) * (canvas.width - 2 * pad); }
+    // draw the non-active greeks first so the active one sits on top
+    GREEK_ORDER.slice().sort(function (a, b) { return (a === emphGreek) - (b === emphGreek); }).forEach(function (gk) {
+      var fin = [];
+      for (var i = 0; i < n; i++) { var val = points[i][gk]; if (val != null && isFinite(val)) fin.push(val); }
+      if (fin.length < 2) return;
+      var lo = Math.min.apply(null, fin), hi = Math.max.apply(null, fin);
+      if (hi === lo) { lo -= 1; hi += 1; }
+      function Y(v) { return pad + (1 - (v - lo) / (hi - lo)) * (canvas.height - 2 * pad); }
+      var rgb = GREEK_META[gk].dotColor, active = gk === emphGreek;
+      g.strokeStyle = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + (active ? 0.95 : 0.45) + ')';
+      g.lineWidth = (active ? 1.7 : 1.0) * DPR;
+      g.beginPath();
+      var open = false;
+      for (var k = 0; k < n; k++) {
+        var v = points[k][gk];
+        if (v == null || !isFinite(v)) { open = false; continue; } // gap: strike outside that snapshot's window
+        if (!open) { g.moveTo(X(k), Y(v)); open = true; } else g.lineTo(X(k), Y(v));
       }
-    }
+      g.stroke();
+    });
   }
 
   function positionTip(node) {
@@ -676,11 +667,11 @@
     });
     head.append(idx, label, val, rm);
     var spark = document.createElement('canvas'); spark.className = 'pin-spark';
-    spark.width = 200 * DPR; spark.height = 34 * DPR; spark.style.width = '200px'; spark.style.height = '34px';
+    spark.width = 200 * DPR; spark.height = 38 * DPR; spark.style.width = '200px'; spark.style.height = '38px';
     var cap = document.createElement('div'); cap.className = 'pin-cap'; cap.textContent = 'loading day series…';
     row.append(head, spark, cap);
     pinListEl.append(row);
-    return (pinRows[key] = { row: row, idxEl: idx, valEl: val, spark: spark, capEl: cap, gen: 0 });
+    return (pinRows[key] = { row: row, idxEl: idx, valEl: val, spark: spark, capEl: cap, gen: 0, points: null });
   }
 
   function fetchSparkInto(key) {
@@ -688,17 +679,27 @@
     var node = scene ? scene.nodeByPrice[key] : null;
     if (!entry || !node) return;
     var gen = entry.gen = ++pinGenSeq;
-    var greekAtFetch = activeGreek;
     entry.capEl.textContent = 'loading day series…';
-    fetchSeries(node).then(function (series) {
+    fetchSeries(node, 'all').then(function (series) {
       if (pinRows[key] !== entry || entry.gen !== gen) return; // row removed or superseded by a newer fetch
-      var pts = (series.points || []).filter(function (p) { return p.v != null; });
-      if (pts.length < 2) { entry.capEl.textContent = 'no history yet — archive still building'; return; }
-      entry.capEl.textContent = GREEK_META[greekAtFetch].short + ' · ' + pts.length + ' snapshots';
-      drawSpark(entry.spark, series.points, 200, 34);
+      var pts = series.points || [];
+      var usable = pts.filter(function (p) { return GREEK_ORDER.some(function (g) { return p[g] != null; }); });
+      if (usable.length < 2) { entry.points = null; entry.capEl.textContent = 'no history yet — archive still building'; return; }
+      entry.points = pts;
+      entry.capEl.textContent = 'all greeks · ' + pts.length + ' snapshots';
+      drawMultiSpark(entry.spark, pts, 200, 38, activeGreek);
     }).catch(function (err) {
       if (pinRows[key] !== entry || entry.gen !== gen) return;
       entry.capEl.textContent = 'series unavailable: ' + err.message;
+    });
+  }
+
+  // a greek switch changes only which line is emphasized — redraw from the
+  // stored points instead of refetching (the all-greek series is greek-agnostic)
+  function redrawPinSparks() {
+    pins.forEach(function (key) {
+      var entry = pinRows[key];
+      if (entry && entry.points) drawMultiSpark(entry.spark, entry.points, 200, 38, activeGreek);
     });
   }
 
@@ -1450,7 +1451,8 @@
     updateReadout(lastPayload, activeGreek);
     updateRegime(lastPayload, activeGreek);
     updateLegend(activeGreek);
-    reconcileInspect(true); // greek changed → refetch each pin's day-series
+    reconcileInspect(false); // greek changed: pin values update; the all-greek series is greek-agnostic
+    redrawPinSparks();       // …so just re-emphasize the newly-active greek's line, no refetch
     requestRender();
   }
 
