@@ -867,13 +867,15 @@ const server = http.createServer(async (req, res) => {
     const strike = Number(url.searchParams.get('strike'));
     // greek=all returns every greek's series in one pass (the pin compare panel
     // overlays all four) — one file-read sweep instead of four separate ones
-    const GREEK_FIELDS = { gamma: 'gex', vanna: 'vanna', charm: 'charm', delta: 'delta' };
+    // 'speed' (3rd-order) resolves to the b.speed array present in snapshots
+    // archived since it shipped; older snapshots simply read null (gap) for it.
+    const GREEK_FIELDS = { gamma: 'gex', vanna: 'vanna', charm: 'charm', delta: 'delta', speed: 'speed' };
     const greekParam = url.searchParams.get('greek');
     const allGreeks = greekParam === 'all';
     const greek = allGreeks ? null : GREEK_FIELDS[greekParam];
     if (!symbol || !band || !isFinite(strike) || (!greek && !allGreeks)) {
       res.writeHead(400, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'need ?symbol=&band=&strike=&greek=gamma|vanna|charm|delta|all (&day=)' }));
+      return res.end(JSON.stringify({ error: 'need ?symbol=&band=&strike=&greek=gamma|vanna|charm|delta|speed|all (&day=)' }));
     }
     const symDir = path.normalize(path.join(ARCHIVE_DIR, symbol));
     if (!symDir.startsWith(ARCHIVE_DIR + path.sep)) {
@@ -979,6 +981,7 @@ const server = http.createServer(async (req, res) => {
             vanna: b.vanna.map(rInt),
             charm: b.charm.map(rInt),
             delta: b.delta.map(rInt),
+            speed: b.speed.map(rInt),
           })),
           landmarks: {
             callWall: overall.callWall ? overall.callWall.strike : null,
@@ -992,6 +995,8 @@ const server = http.createServer(async (req, res) => {
             // delta imbalance (call-side minus put-side), restricted to the
             // mesh's +/-rangePct strike window like the per-node values
             netDelta: rInt(mesh.bands.reduce((sum, b) => sum + b.delta.reduce((s, v) => s + v, 0), 0)),
+            // net speed (3rd-order): same window-summed convention as netDelta
+            netSpeed: rInt(mesh.bands.reduce((sum, b) => sum + b.speed.reduce((s, v) => s + v, 0), 0)),
           },
           // per-band walls/flip/net from ONLY that band's options — the honest
           // per-expiry counterpart to the aggregate landmarks above

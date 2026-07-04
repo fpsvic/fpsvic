@@ -219,11 +219,14 @@ test('computeMeshBands: a band with no options in range is all zeros, and gex re
   const zeroDte = mesh.bands.find((b) => b.name === '0DTE');
   assert.ok(zeroDte.gex.every((v) => v === 0), '~40dte-only chain contributes nothing to the 0DTE band');
   assert.ok(zeroDte.vanna.every((v) => v === 0) && zeroDte.charm.every((v) => v === 0) && zeroDte.delta.every((v) => v === 0));
+  assert.ok(zeroDte.speed.every((v) => v === 0), 'speed is empty in the untouched 0DTE band too');
   const monthly = mesh.bands.find((b) => b.name === 'Monthly');
   assert.ok(monthly.gex.some((v) => v !== 0), 'the ~40dte options land in the Monthly band');
   assert.ok(monthly.vanna.some((v) => v !== 0), 'vanna is populated alongside gex');
   assert.ok(monthly.charm.some((v) => v !== 0), 'charm is populated alongside gex');
   assert.ok(monthly.delta.some((v) => v !== 0), 'delta is populated alongside gex');
+  assert.ok(monthly.speed.some((v) => v !== 0), 'speed (3rd-order) is populated alongside gex');
+  assert.ok(monthly.speed.every((v) => isFinite(v)), 'every speed value is finite');
   const bandTotal = mesh.bands.reduce((sum, b) => sum + b.gex.reduce((s, v) => s + v, 0), 0);
   const all = E.computeMetrics(ch, 'all').strikes
     .filter((r) => r.strike >= mesh.strikes[0] && r.strike <= mesh.strikes[mesh.strikes.length - 1])

@@ -307,6 +307,14 @@
 
     const bands = bandDefs.map((def) => {
       const gex = zeroMap(strikes), vanna = zeroMap(strikes), charm = zeroMap(strikes), delta = zeroMap(strikes);
+      // speed = dGamma/dSpot (3rd-order). Only 'speed' passed the accuracy-pass
+      // gate (gex/thirdorder-probe.js): color/ultima were too IV-noisy to draw.
+      // Expressed as the change in this strike's dollar-GEX for the NEXT +1%
+      // spot move, from gamma's own curvature: d(dollar-gamma)/dS * (S*0.01) =
+      // speed * S^2 * 0.01 * S * 0.01 = speed * S^3 * 1e-4 PER SHARE, then
+      // weighted by OI * CONTRACT_SIZE exactly like the gamma line above.
+      // Positive => dealer gamma here builds as spot rises (pin strengthening).
+      const speed = zeroMap(strikes);
       for (const o of chain.options) {
         if (o.oi <= 0 || !gex.has(o.strike)) continue;
         if (o.dte < def.minDte || o.dte > def.maxDte) continue;
@@ -318,6 +326,12 @@
         charm.set(strike, charm.get(strike) + sign * (gk.charm / 365) * o.oi * CONTRACT_SIZE * S);
         // no dealer sign: raw delta*OI so calls push positive, puts negative (imbalance)
         delta.set(strike, delta.get(strike) + gk.delta * o.oi * CONTRACT_SIZE * S);
+        // speed needs the same usable-IV guard optionGreeks uses (bsGreeks3
+        // divides by sigma); a quoted-only contract contributes 0 rather than a blowup
+        if (o.iv > 0.005) {
+          const g3 = bsGreeks3(S, o.strike, o.T, o.iv);
+          speed.set(strike, speed.get(strike) + sign * g3.speed * o.oi * CONTRACT_SIZE * S * S * S * 1e-4);
+        }
       }
       return {
         name: def.name,
@@ -325,6 +339,7 @@
         vanna: strikes.map((s) => vanna.get(s)),
         charm: strikes.map((s) => charm.get(s)),
         delta: strikes.map((s) => delta.get(s)),
+        speed: strikes.map((s) => speed.get(s)),
       };
     });
 

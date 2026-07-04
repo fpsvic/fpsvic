@@ -102,6 +102,15 @@
     box-shadow:0 0 18px -2px rgba(53,214,176,0.55);
   }
   .chip.active:hover{ color:#04140f; }
+  /* 3rd-order channel (speed): violet family, set apart from the four 2nd-order greeks */
+  .chip.order3{ border-color:rgba(176,130,255,0.45); }
+  .chip.order3:hover{ border-color:#b082ff; }
+  .chip.order3 sup{ font-size:8px; opacity:0.8; vertical-align:super; margin-left:1px; }
+  .chip.order3.active{
+    color:#0a0416; background:#b082ff; border-color:#b082ff;
+    box-shadow:0 0 18px -2px rgba(176,130,255,0.6);
+  }
+  .chip.order3.active:hover{ color:#0a0416; }
 
   #legend{
     position:fixed; bottom:20px; left:22px;
@@ -356,6 +365,17 @@
   .help-grid .desc{ color:var(--muted); }
   .help-close{ margin-top:18px; font-size:11px; color:var(--faint); text-align:right; }
 
+  /* shown when the active greek has no data in the current snapshot (e.g. a
+     HISTORY scrub back onto 'speed' past the point it shipped) — an empty mesh
+     with a plain explanation instead of a blank stage that reads as broken */
+  #greekNotice{
+    position:fixed; left:50%; top:50%; transform:translate(-50%,-50%);
+    z-index:6; max-width:330px; text-align:center; pointer-events:none;
+    padding:13px 18px; font-size:12.5px; line-height:1.5; color:var(--faint);
+    border:1px solid var(--panel-border); border-radius:9px;
+    background:rgba(12,16,22,0.72); backdrop-filter:blur(2px);
+  }
+
   @media (prefers-reduced-motion: reduce){ * { animation-duration:0.001ms !important; } }
 </style>
 </head>
@@ -393,6 +413,7 @@
         <button class="chip" data-greek="vanna">VANNA</button>
         <button class="chip" data-greek="charm">CHARM</button>
         <button class="chip" data-greek="delta">DELTA</button>
+        <button class="chip order3" data-greek="speed" title="3rd-order: ∂gamma/∂spot — is the gamma wall building or bleeding as spot moves?">SPEED<sup>3</sup></button>
       </div>
     </div>
   </div>
@@ -410,6 +431,8 @@
   <button id="focusToggle" class="focus-btn" aria-pressed="true">Near-term focus: ON</button>
 </div>
 
+<div id="greekNotice" style="display:none"></div>
+
 <div id="tip"></div>
 
 <div class="hud" id="legend">
@@ -420,6 +443,7 @@
   <div class="legend-row"><span class="swatch" style="background:var(--spot);color:var(--spot)"></span><span class="label"><b>Spot beam</b> — current price, cuts through every expiry shell</span></div>
   <div class="legend-row"><span class="swatch" style="background:var(--call);color:var(--call)"></span><span class="label"><b>Wall beams</b> — call wall (teal) / put wall (orange), all-expiry levels</span></div>
   <div class="legend-row" id="legendFlipRow"><span class="swatch" style="background:var(--flip);color:var(--flip)"></span><span class="label"><b id="legendFlipWord">Flip beam</b> <span id="legendFlipDesc">— zero-gamma crossing, all expiries</span></span></div>
+  <div class="legend-row" id="legendOrder3" style="display:none"><span class="swatch" style="background:#b082ff;color:#b082ff"></span><span class="label"><b>3rd-order channel</b> — speed is more input-sensitive than the 2nd-order greeks and robustly scaled (98th-pct); its day-history only fills in from when it shipped. Read the <i>shape</i> directionally, not the raw level.</span></div>
   <div class="legend-row"><span class="swatch satellite" style="background:#8fa0b0;color:#8fa0b0"></span><span class="label"><b>Ring markers</b> — that band's OWN wall (○ teal/orange) and flip (◇), on its own shell</span></div>
   <div class="legend-sep"></div>
   <div class="legend-row"><span class="swatch satellite" style="background:#aeb8c2;color:#aeb8c2"></span><span class="label"><b>Synapses</b> — the other three greeks, orbiting each node at a fixed spot: color = which greek, filled = positive, hollow ring = negative, distance = magnitude</span></div>
@@ -461,7 +485,7 @@
     <h2>Keyboard &amp; controls</h2>
     <p class="help-sub">everything is reachable without leaving the mesh</p>
     <div class="help-grid">
-      <kbd>1&ndash;4 &middot; G V C D</kbd><span class="desc">Switch primary greek (the shape)</span>
+      <kbd>1&ndash;5 &middot; G V C D S</kbd><span class="desc">Switch primary greek (the shape) &mdash; 5/S = speed (3rd-order)</span>
       <kbd>F</kbd><span class="desc">Near-term focus on / off</span>
       <kbd>H</kbd><span class="desc">History playback (archived snapshots)</span>
       <kbd>R</kbd><span class="desc">Reset camera to default angle</span>

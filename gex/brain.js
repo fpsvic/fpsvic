@@ -102,6 +102,20 @@
       flipField: null, flipWord: null, flipDesc: null,
       netLabel: 'Net Δ imbalance', netField: 'netDelta', flipLabel: null,
     },
+    // Third-order. Only 'speed' cleared the accuracy-pass gate
+    // (gex/thirdorder-probe.js): color/ultima were too IV-noisy to draw. It's a
+    // PRIMARY-ONLY shape — deliberately left out of GREEK_ORDER so the synapse
+    // ring stays the four 2nd-order greeks. `robust` normalization keeps a
+    // near-expiry T^-3/2 spike from washing out the mesh; `order3` surfaces the
+    // "newer / read directionally" note in the legend.
+    speed: {
+      key: 'speed', subLabel: 'speed (∂gamma/∂spot)', short: 'Speed', angle: 0, dotColor: [176, 130, 255],
+      posWord: 'Gyrus', posDesc: '(bulge out) — dealer gamma builds as spot rises here (stabilization strengthening into the move)',
+      negWord: 'Sulcus', negDesc: '(fold in) — dealer gamma bleeds as spot rises here (stabilization fading, room to accelerate)',
+      flipField: null, flipWord: null, flipDesc: null,
+      netLabel: 'Net Speed', netField: 'netSpeed', flipLabel: null,
+      robust: true, order3: true,
+    },
   };
   var GREEK_ORDER = ['gamma', 'vanna', 'charm', 'delta']; // fixed synapse angle slots, stable across primary switches
   var activeGreek = 'gamma';
@@ -181,8 +195,23 @@
     if (!strikes.length || !bands.length) return null;
 
     var arrKey = GREEK_META[greekKey].key; // e.g. 'gamma' -> 'gex', the array field on each band
+    // Normalization denominator for THIS greek. The 2nd-order greeks use the
+    // true max (every |value| lands in [0,1]). The 3rd-order 'speed' channel is
+    // `robust`: near expiry it blows up like T^-3/2, so one 0DTE strike can be
+    // ~100x the rest — a true-max normalize would flatten everything else to
+    // invisible. Instead use the 98th percentile of |value| and clamp per-node
+    // to [-1,1], so those few spikes render at full magnitude without stealing
+    // the whole scale. (See gex/thirdorder-probe.js for why speed and not color.)
+    var robust = !!GREEK_META[greekKey].robust;
+    var absList = [];
+    bands.forEach(function (b) { (b[arrKey] || []).forEach(function (v) { if (isFinite(v)) absList.push(Math.abs(v)); }); });
     var maxAbs = 1e-9;
-    bands.forEach(function (b) { b[arrKey].forEach(function (v) { maxAbs = Math.max(maxAbs, Math.abs(v)); }); });
+    for (var ai = 0; ai < absList.length; ai++) if (absList[ai] > maxAbs) maxAbs = absList[ai];
+    if (robust && absList.length >= 8) {
+      var sortedAbs = absList.slice().sort(function (a, b) { return a - b; });
+      var pct = sortedAbs[Math.floor(sortedAbs.length * 0.98)];
+      if (pct > 1e-9) maxAbs = pct; // else too few distinct values — fall back to the true max above
+    }
 
     // secondary (synapse) greeks: the other three, each normalized against ITS
     // OWN global max across the mesh — same idea as the primary, so a quiet
@@ -205,8 +234,11 @@
 
     bands.forEach(function (band) {
       var meta = BAND_META[band.name] || { radius: 200, phi: 0, tilt: 0 };
-      band[arrKey].forEach(function (raw, si) {
+      // an archived snapshot from before this greek shipped simply has no array
+      // for it — render nothing rather than throw (playback of old 'speed' days)
+      (band[arrKey] || []).forEach(function (raw, si) {
         var g = raw / maxAbs; // normalize to roughly [-1, 1] across the whole mesh, for THIS greek
+        if (robust) g = g < -1 ? -1 : (g > 1 ? 1 : g); // clamp the few beyond-p98 spikes to full magnitude
         var key = band.name + '_' + strikes[si];
         // diff RAW values against the baseline, scaled by the CURRENT max —
         // only this strike's own exposure moving can fire its pulse
@@ -243,8 +275,9 @@
           z: r * Math.cos(meta.phi) * Math.cos(theta),
           band: band.name, si: si, strike: strikes[si], g: g, raw: raw,
           gMag: Math.min(1, Math.abs(g)),
-          // all four raw dollar exposures, for the inspect tooltip
-          raws: { gamma: band.gex[si], vanna: band.vanna[si], charm: band.charm[si], delta: band.delta[si] },
+          // raw dollar exposures for the inspect tooltip; speed is undefined on
+          // snapshots archived before it shipped (tooltip then shows a dash)
+          raws: { gamma: band.gex[si], vanna: band.vanna[si], charm: band.charm[si], delta: band.delta[si], speed: band.speed ? band.speed[si] : undefined },
           pulseAmt: pulseAmt,
           satellites: satellites,
           // filled per applyDerived(): emph, drawBase, sprite
@@ -517,7 +550,10 @@
     head.className = 'tip-head';
     head.textContent = fmtPrice(node.strike) + ' · ' + node.band + (isPinned(hoverKey) ? ' · PINNED' : '');
     tipEl.append(head);
-    GREEK_ORDER.forEach(function (k) {
+    // the four synapse greeks, plus the active shape when it's a primary-only
+    // greek (speed) that isn't among them — so its row (and "(shape)") shows too
+    var tipGreeks = GREEK_ORDER.indexOf(activeGreek) === -1 ? [activeGreek].concat(GREEK_ORDER) : GREEK_ORDER;
+    tipGreeks.forEach(function (k) {
       var m = GREEK_META[k];
       var row = document.createElement('div');
       row.className = 'tip-row';
@@ -1306,7 +1342,9 @@
     var gexEl = document.getElementById('r-gex');
     var netVal = payload.landmarks[meta.netField];
     gexEl.textContent = fmtGex(netVal);
-    gexEl.className = 'v mono ' + (netVal >= 0 ? 'call' : 'put');
+    // no call/put tint on a '—' dash (e.g. Net Speed on a pre-speed playback
+    // snapshot): undefined >= 0 is false, which would otherwise read as 'put'
+    gexEl.className = 'v mono ' + (isFinite(netVal) ? (netVal >= 0 ? 'call' : 'put') : '');
     refreshAsof();
 
     // secondary (synapse) greeks: compact net-value readout for the other three
@@ -1344,6 +1382,12 @@
     } else {
       flipRow.style.display = 'none';
     }
+
+    // 3rd-order channels (speed) carry an honesty note: it's a newer, more
+    // input-sensitive greek, robustly scaled, and its day-history only fills in
+    // from when it shipped — read the shape directionally, not the raw level.
+    var order3Row = document.getElementById('legendOrder3');
+    if (order3Row) order3Row.style.display = meta.order3 ? '' : 'none';
 
     var secondary = GREEK_ORDER.filter(function (k) { return k !== greekKey; });
     var satLegend = document.getElementById('satLegendRow');
@@ -1440,6 +1484,25 @@
     el.classList.add('show');
   }
 
+  // A snapshot archived before the active greek existed simply has no array for
+  // it — buildScene renders an empty mesh (honest: the data was never computed).
+  // Rather than leave a blank stage that reads as "broken", say so plainly. This
+  // is the graceful path for scrubbing HISTORY back onto 'speed' past the point
+  // it shipped; it self-heals as newer snapshots accumulate.
+  function updateGreekNotice(payload, greekKey) {
+    var el = document.getElementById('greekNotice');
+    if (!el) return;
+    var arrKey = GREEK_META[greekKey].key;
+    var hasSnapshot = payload && payload.strikes && payload.strikes.length && payload.bands && payload.bands.length;
+    var greekMissing = hasSnapshot && payload.bands.every(function (b) { return !Array.isArray(b[arrKey]); });
+    if (greekMissing) {
+      el.textContent = 'No ' + GREEK_META[greekKey].short.toLowerCase() + ' data in this snapshot — it predates the ' + GREEK_META[greekKey].short.toLowerCase() + ' channel. Scrub forward or go live.';
+      el.style.display = '';
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
   function renderActiveGreek() {
     if (!lastPayload) return;
     var built = buildScene(lastPayload, activeGreek);
@@ -1451,6 +1514,7 @@
     updateReadout(lastPayload, activeGreek);
     updateRegime(lastPayload, activeGreek);
     updateLegend(activeGreek);
+    updateGreekNotice(lastPayload, activeGreek);
     reconcileInspect(false); // greek changed: pin values update; the all-greek series is greek-agnostic
     redrawPinSparks();       // …so just re-emphasize the newly-active greek's line, no refetch
     requestRender();
@@ -1539,6 +1603,7 @@
       updateReadout(json, activeGreek);
       updateRegime(json, activeGreek);
       updateLegend(activeGreek);
+      updateGreekNotice(json, activeGreek);
       updateBandTags(json);
       reconcileInspect(false); // live poll: refresh pin values, keep sparklines
       banner('');
@@ -1717,6 +1782,7 @@
       updateReadout(payload, activeGreek);
       updateRegime(payload, activeGreek);
       updateLegend(activeGreek);
+      updateGreekNotice(payload, activeGreek);
       updateBandTags(payload);
       reconcileInspect(false); // playback step: refresh pin values against the frozen snapshot
       pbTimeEl.textContent = pbLabel(pb.list[i]);
@@ -1810,7 +1876,7 @@
   }
   helpEl.addEventListener('click', function (e) { if (e.target === helpEl) closeHelp(); }); // backdrop click only
 
-  var GREEK_KEYS = { '1': 'gamma', '2': 'vanna', '3': 'charm', '4': 'delta', g: 'gamma', v: 'vanna', c: 'charm', d: 'delta' };
+  var GREEK_KEYS = { '1': 'gamma', '2': 'vanna', '3': 'charm', '4': 'delta', '5': 'speed', g: 'gamma', v: 'vanna', c: 'charm', d: 'delta', s: 'speed' };
   document.addEventListener('keydown', function (e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     var tag = e.target && e.target.tagName;

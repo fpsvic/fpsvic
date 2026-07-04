@@ -4,6 +4,30 @@ Produced by a 5-dimension audit (frontend bugs, financial math, render perf, tra
 44 raw findings, 34 confirmed after adversarial verification) at snapshot commit `2c74bc3`, 2026-07-03.
 This is the working backlog — prune items as they land.
 
+**Status 2026-07-04, 3rd-order greeks — RENDER UI shipped for `speed` (roadmap #8, render half).** The
+accuracy pass (prior status below) cleared exactly one 3rd-order greek to draw: **speed** (∂gamma/∂spot,
+CV ×0.9 — more robust than the trusted 2nd-order greeks). It's now a fully-wired PRIMARY-ONLY shape,
+selectable like the other four: violet `SPEED³` chip, keyboard `5`/`s`, `Net Speed` readout + regime
+segment, per-node tooltip/pin values, URL/per-symbol persistence. Kept deliberately OUT of the synapse
+ring (`GREEK_ORDER` stays the four 2nd-order greeks), so switching to speed shows all four as context
+synapses. exposure.js `computeMeshBands` accumulates dealer-signed, OI-weighted speed as the change in
+a strike's dollar-GEX for the next +1% move from gamma's own curvature (`speed·S³·1e-4`), guarded by
+the same usable-IV gate as the others (no quoted 3rd-order fallback exists, so a no-IV contract adds 0).
+Server carries `b.speed` per band + `netSpeed`; the series endpoint accepts `greek=speed`.
+Two honesty guards, since the render half of the gate is inherently softer than the math half:
+(1) **robust normalization** — speed is `robust`, normalized to the 98th percentile of |value| and
+clamped per-node to [-1,1], so the still-UNTESTED near-expiry T^−3/2 blowup (the holiday book again has
+no 0DTE today, 2026-07-04) can never wash the mesh out to invisibility whenever real 0DTE data appears;
+(2) a legend **3rd-order-channel note** (shown only for speed) plus a stage **notice** on HISTORY scrubs
+back past the point speed shipped (old snapshots have no `speed` array → empty mesh + "predates the
+speed channel" rather than a blank that reads as broken; self-heals as new snapshots accrue). Verified
+live in-browser: chip/keyboard switch, Net Speed +44.11B (=server netSpeed), legend copy + note, regime,
+pin value tracks the greek switch (speed +4.5M ↔ gamma −9.5M at 6930 Monthly), playback graceful both
+ways (empty-with-notice ↔ 1192-node mesh), gamma regression clean, console error-free; 27 unit tests
+green (+2 speed mesh assertions). **STILL OPEN:** re-run `node gex/thirdorder-probe.js` on a real
+expiry/trading day to confirm the 0DTE case before trusting near-expiry speed magnitudes; ultima/color
+remain unrendered per the gate.
+
 **Status 2026-07-04, archive retention/compaction: landed (roadmap #2 tail / risk #1).** The archive
 grows ~10 MB/day/symbol; this adds LOSSLESS gzip COMPACTION of completed past days (each
 `{HHMMSSZ-tag}.json` → `.json.gz`). Because it never deletes history it runs BY DEFAULT (unlike the
