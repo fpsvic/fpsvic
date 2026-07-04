@@ -586,14 +586,18 @@ export async function scanRow(symbol, requestedSource = '', { refresh = false } 
 const ARCHIVE_DIR = process.env.GEX_ARCHIVE_DIR || path.join(ROOT, 'data', 'brain');
 const ARCHIVE_OFF = !!process.env.GEX_NO_ARCHIVE;
 
-function archiveBrainSnapshot(symbol, body, now) {
+function archiveBrainSnapshot(symbol, body, now, sourceLabel) {
   if (ARCHIVE_OFF) return;
   const iso = new Date(now).toISOString();               // 2026-07-03T14:32:05.123Z
   const day = iso.slice(0, 10);
   const stamp = iso.slice(11, 19).replace(/:/g, '') + 'Z'; // 143205Z
+  // source tag in the filename: the single-ticker page (Tradier-first) and the
+  // macro view (CBOE-first) can both archive the same symbol in the same
+  // second — without the tag the second write would silently clobber the first
+  const tag = /tradier/i.test(sourceLabel || '') ? 'tradier' : /cboe/i.test(sourceLabel || '') ? 'cboe' : 'src';
   const dir = path.join(ARCHIVE_DIR, symbol.replace(/[^A-Z0-9^_.]/gi, ''), day);
   fs.promises.mkdir(dir, { recursive: true })
-    .then(() => fs.promises.writeFile(path.join(dir, `${stamp}.json`), body))
+    .then(() => fs.promises.writeFile(path.join(dir, `${stamp}-${tag}.json`), body))
     .catch((err) => console.error(`[gex] archive ${symbol} failed: ${err.message}`));
 }
 
@@ -661,13 +665,20 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/brain') {
     const symbol = String(url.searchParams.get('symbol') || '').toUpperCase().replace(/[^A-Z^_.]/g, '');
     const source = { tradier: 'tradier', cboe: 'cboe' }[url.searchParams.get('source')] || '';
+    // ?prefer=cboe flips the source order CBOE-first (fallback intact) — the
+    // macro view fans out over a whole watchlist at once, and CBOE answers in
+    // ONE request per ticker where Tradier needs ~20 sequential per-expiry
+    // calls; same reasoning as the scanner's preferCboe. Namespaced in the
+    // cache key so a CBOE-first body never masquerades as the Tradier-first
+    // one the single-ticker page shows.
+    const preferCboe = !source && url.searchParams.get('prefer') === 'cboe';
     if (!symbol) {
       res.writeHead(400, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ error: 'missing ?symbol=' }));
     }
     try {
-      const brainBody = await cached(`brain:${source || 'auto'}:${symbol}`, CACHE_MS, async () => {
-        const chainBody = await fetchChain(symbol, source);
+      const brainBody = await cached(`brain:${source || (preferCboe ? 'cboe1st' : 'auto')}:${symbol}`, CACHE_MS, async () => {
+        const chainBody = await fetchChain(symbol, source, { preferCboe });
         const now = Date.now();
         const chain = GexExposure.parseCboe(JSON.parse(chainBody), symbol, now);
         const overall = GexExposure.computeMetrics(chain, 'all');
@@ -704,7 +715,7 @@ const server = http.createServer(async (req, res) => {
             netDelta: rInt(mesh.bands.reduce((sum, b) => sum + b.delta.reduce((s, v) => s + v, 0), 0)),
           },
         });
-        archiveBrainSnapshot(chain.symbol, payload, now);
+        archiveBrainSnapshot(chain.symbol, payload, now, chain.source);
         return payload;
       });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });

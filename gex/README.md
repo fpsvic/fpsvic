@@ -93,8 +93,22 @@ concentrated, and on which greek, right now?*
 - **Data path.** `GET /api/brain?symbol=SYM` returns a strike × expiry-band grid of all
   four greeks (`GexExposure.computeMeshBands`) plus the landmark levels, reusing the
   exact chain fetch/cache/parse path as the dashboard — the numbers can never drift
-  between views. The page polls every 20 s and pulses nodes whose exposure moved since
-  the last poll (a live-only stand-in for real history, which doesn't exist yet).
+  between views. The response is memoized on the chain's cache TTL, and every fresh
+  build is archived to `gex/data/brain/` (the raw corpus for future playback;
+  `GEX_NO_ARCHIVE=1` disables). The page polls every 20 s and pulses nodes whose
+  exposure moved since the last poll (a live-only stand-in for real playback).
+
+### The macro view
+
+`/macro.html` is the triage screen: one **mini-brain per watchlist ticker** (the
+watchlist is shared with the scanner — same localStorage list), each a simplified
+render — static camera, gamma only, near-term emphasis baked in — that draws exactly
+once per sweep. Cards carry the regime at a glance (border + `DEALERS LONG γ` /
+`SHORT γ` chip on the sign of net GEX), spot, walls, and flip, plus a **mover badge**
+(Δ net GEX since the previous sweep, top-3 movers called out). Click any card for the
+full brain. Sweeps run every 60 s through a small request pool with `?prefer=cboe`,
+because CBOE answers a whole chain in one request per ticker — the same fan-out
+reasoning as the scanner.
 
 **CBOE delayed quotes (default).** CBOE publishes this API for free:
 `https://cdn.cboe.com/api/global/delayed_quotes/options/_SPX.json` (indexes use a `_`

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GEX Macro — watchlist brains</title>
+<style>
+  :root{
+    --bg:#0a0e14;
+    --panel:#10161d;
+    --panel-border:#232e39;
+    --line:#26313d;
+    --text:#e6ecf2;
+    --muted:#7c8a99;
+    --faint:#4b5a68;
+    --call:#35d6b0;
+    --put:#ff7a52;
+    --spot:#c68fff;
+    --err:#ff7a52;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:radial-gradient(ellipse at 50% 20%, #0d131a 0%, var(--bg) 60%);
+    color:var(--text);
+    font-family:'Segoe UI', system-ui, -apple-system, sans-serif;
+    min-height:100vh;
+  }
+  .mono{
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-variant-numeric:tabular-nums;
+  }
+  .wrap{ max-width:1500px; margin:0 auto; padding:18px 22px 40px; }
+
+  header.top{
+    display:flex; align-items:baseline; justify-content:space-between; gap:14px;
+    flex-wrap:wrap; margin-bottom:4px;
+  }
+  header.top .brand{ display:flex; align-items:baseline; gap:10px; }
+  .mark{
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-size:11px; letter-spacing:0.18em; color:var(--faint);
+    border:1px solid var(--panel-border); padding:3px 7px; border-radius:3px;
+  }
+  header.top h1{ font-size:16px; font-weight:600; margin:0; }
+  header.top h1 .hl{ color:var(--call); }
+  .sub{ font-size:12px; color:var(--muted); margin:2px 0 14px; }
+  .sub a{ color:var(--muted); }
+  .sub a:hover{ color:var(--text); }
+  #status{
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-size:10.5px; letter-spacing:0.05em; color:var(--faint);
+  }
+  #status.err{ color:var(--err); }
+
+  #grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));
+    gap:14px;
+  }
+  .card{
+    background:rgba(16,22,29,0.72);
+    border:1px solid var(--panel-border);
+    border-left:3px solid var(--panel-border);
+    border-radius:8px;
+    padding:10px 12px 9px;
+    cursor:pointer;
+    transition:border-color 0.15s, transform 0.06s;
+  }
+  .card:hover{ border-color:var(--faint); transform:translateY(-1px); }
+  .card.pos{ border-left-color:var(--call); }
+  .card.neg{ border-left-color:var(--put); }
+  .card.error{ opacity:0.55; cursor:default; }
+
+  .card .head{ display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+  .card .sym{ font-weight:700; font-size:15px; letter-spacing:0.02em; }
+  .card.pos .sym{ color:var(--call); }
+  .card.neg .sym{ color:var(--put); }
+  .card .regime{
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-size:9.5px; letter-spacing:0.1em; color:var(--muted);
+    border:1px solid var(--line); border-radius:4px; padding:2px 6px;
+  }
+  .card .spot{ font-size:12.5px; color:var(--muted); }
+  .card .spot b{ color:var(--spot); font-weight:600; }
+
+  .card canvas{ display:block; width:100%; height:150px; margin:6px 0 4px; }
+
+  .card .stats{
+    display:flex; justify-content:space-between; gap:6px;
+    font-size:11.5px; color:var(--muted);
+  }
+  .card .stats b{ font-weight:600; color:var(--text); }
+  .card .stats .gpos{ color:var(--call); }
+  .card .stats .gneg{ color:var(--put); }
+
+  .card .mover{
+    margin-top:6px; font-size:10.5px; letter-spacing:0.04em;
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    color:var(--faint); min-height:14px;
+  }
+  .card .mover.up{ color:var(--call); }
+  .card .mover.down{ color:var(--put); }
+  .card .mover.top{ font-weight:700; }
+  .card .errmsg{ font-size:11.5px; color:var(--err); margin-top:6px; }
+
+  #empty{
+    color:var(--muted); font-size:13px; padding:30px 0;
+  }
+  #empty a{ color:var(--call); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1><span class="mark">MACRO</span>&nbsp; GEX BRAINS — <span class="hl">watchlist</span></h1>
+    </div>
+    <span id="status">warming up…</span>
+  </header>
+  <p class="sub">
+    one mini-brain per ticker · gamma shape, near-term focus, all-expiry landmarks in the stats ·
+    click a card for the full brain · watchlist shared with the <a href="scan.html">scanner</a> ·
+    <a href="index.html?symbol=SPX">dashboard</a>
+  </p>
+
+  <div id="grid"></div>
+  <div id="empty" style="display:none">
+    Watchlist is empty — add tickers in the <a href="scan.html">scanner</a> (both views share one list).
+  </div>
+</div>
+<script src="macro.js"></script>
+</body>
+</html>

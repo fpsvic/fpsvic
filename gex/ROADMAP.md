@@ -15,6 +15,15 @@ the same batch: every fresh brain build lands in `gex/data/brain/` (gitignored;
 `GEX_NO_ARCHIVE=1` to disable). Still open from fix-first: #6
 (node tooltip), #9 (synapse sign legibility), #10 (strike ticks), #12–15, rest of #16.
 
+**Status 2026-07-03, macro view (roadmap #5): landed.** `gex/macro.html` + `gex/macro.js`:
+one mini-brain per watchlist ticker (watchlist shared with the scanner via the same
+localStorage key), regime-tinted cards with net-GEX/flip/wall stats and Δ-net-GEX mover
+badges, click-through to the full brain. Each mini renders exactly once per 60s sweep —
+no animation loop on the page at all. Server side: `/api/brain?prefer=cboe` flips the
+source order CBOE-first for fan-out breadth (cache-key namespaced), and archive
+filenames carry a source tag so cross-source same-second writes can't clobber each
+other. Verified live: 24/24 tickers, zero errors, click-through works.
+
 **Status 2026-07-03, render pipeline (roadmap #1 / fix-first #4 + #11): landed.** brain.js
 render core rewritten: render-on-demand (idle = zero frames — the rAF loop stops entirely;
 verified live: 1 frame per poll/greek-switch/toggle, frames only while dragging), glow
