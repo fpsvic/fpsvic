@@ -4,7 +4,7 @@ Produced by a 5-dimension audit (frontend bugs, financial math, render perf, tra
 44 raw findings, 34 confirmed after adversarial verification) at snapshot commit `2c74bc3`, 2026-07-03.
 This is the working backlog — prune items as they land.
 
-**Status 2026-07-04, QoL & presentation batches 1–3: landed (post-merge, on `main`; 1–2 committed 301ce9a, 3 pending).**
+**Status 2026-07-04, QoL & presentation batches 1–4: landed (post-merge, on `main`; 1–2 = 301ce9a, 3 = ae9bfb8, 4 pending).**
 _Batch 1_ — View-state persistence: active greek + near-term-focus + camera angle serialize to
 `localStorage` (`gex.brain.view`) and to the URL query (`?greek/&focus/&cam`, debounced
 `replaceState`); init precedence is **URL param > localStorage > default**, camera clamped to the
@@ -31,10 +31,17 @@ over). **Macro quick-add** (`macro.html`/`macro.js`): a `+ ticker`/Add control w
 `gex.scan.watchlist` (macro's first write to it; scanner still owns removal) then re-sweeps; input
 sanitized and required to contain ≥1 letter (review fix — punctuation-only would write an
 unremovable NO-DATA card).
-All three batches verified live in-browser — console clean, 25 unit tests green. Adversarial reviews:
-batch 1 7 raw → 2 confirmed-and-fixed; batch 2 1 raw → 0 confirmed; batch 3 4 raw → 2
-confirmed-and-fixed. Remaining QoL/presentation candidates: multi-pin compare, per-symbol greek
-memory, richer sparkline (multi-greek overlay).
+_Batch 4_ — **Per-symbol greek memory** (`gex.brain.greekBySym`): remember the last greek used per
+ticker and restore it on symbol change. Precedence: URL `?greek` (for the symbol it NAMES) >
+per-symbol memory > global last-used > default. The URL pin is symbol-scoped (`urlGreekSymbol`) so a
+failed first load can't leak the link's greek onto a different symbol (review fix); the greek is
+remembered against the on-screen symbol (`lastBuiltSymbol`, not the optimistically-set
+`currentSymbol`) so a switch during an in-flight symbol change is attributed correctly (review fix).
+All four batches verified live in-browser — console clean, 25 unit tests green. Adversarial reviews:
+batch 1 7 raw → 2 confirmed-and-fixed; batch 2 1 raw → 0; batch 3 4 raw → 2 confirmed-and-fixed;
+batch 4 3 raw → 2 distinct confirmed-and-fixed. Remaining QoL/presentation candidate: **multi-pin
+compare** (a substantial refactor of the pin/tooltip/sparkline system with a real UX choice — stacked
+tooltips vs a docked compare panel — worth a dedicated pass); also richer sparkline (multi-greek overlay).
 
 **Status 2026-07-03, "trust the picture" batch:** fix-first **#1** (painter's sort), **#2**
 (expired contracts — now DST-aware NY-close settlement via `nyCloseUtc`, dropped past the

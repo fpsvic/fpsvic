@@ -807,6 +807,22 @@
     opts.forEach(function (s) { var o = document.createElement('option'); o.value = s; symbolListEl.append(o); });
   }
 
+  // ---------------------------------------------------------------- per-symbol greek memory
+  // Different tickers reward different greeks (an index's gamma, a high-vol name's
+  // vanna) — so remember the last greek used per symbol and restore it on an
+  // EXPLICIT symbol change (the Load control). Precedence stays honest: a URL
+  // ?greek always wins (a shared link is deliberate), then this per-symbol
+  // memory, then the global last-greek, then the default. All best-effort.
+  var GREEK_BY_SYM_KEY = 'gex.brain.greekBySym';
+  function loadGreekMap() {
+    try { var o = JSON.parse(localStorage.getItem(GREEK_BY_SYM_KEY)); return (o && typeof o === 'object') ? o : {}; } catch (e) { return {}; }
+  }
+  function greekForSymbol(sym) { var g = loadGreekMap()[sym]; return GREEK_META[g] ? g : null; }
+  function rememberGreekForSymbol(sym, greek) {
+    if (!sym || !GREEK_META[greek]) return;
+    try { var m = loadGreekMap(); m[sym] = greek; localStorage.setItem(GREEK_BY_SYM_KEY, JSON.stringify(m)); } catch (e) { /* private mode / quota */ }
+  }
+
   var DEFAULT_ROTY = 0.32, DEFAULT_ROTX = -0.72;
   function resetCamera() {
     rotY = DEFAULT_ROTY; rotX = DEFAULT_ROTX; zoom = 1;
@@ -1122,6 +1138,7 @@
   var currentSymbol = 'SPX';
   var lastBuiltSymbol = ''; // last symbol whose data actually reached the screen
   var loadSeq = 0;
+  var urlGreekSymbol = null; // the symbol an explicit ?greek was meant for; consumed when THAT symbol first builds
 
   // first-paint skeleton: remove it once the first snapshot builds OR the first
   // attempt errors (past that, the last mesh stays visible across polls and the
@@ -1356,6 +1373,11 @@
     renderActiveGreek();
     flashSwitch();
     persistView();
+    // remember against the symbol actually ON SCREEN — lastBuiltSymbol, not
+    // currentSymbol: load() sets currentSymbol optimistically before its fetch
+    // resolves, so during an in-flight symbol change the mesh (and lastPayload)
+    // still belongs to lastBuiltSymbol. In playback the frozen pb.symbol is shown.
+    rememberGreekForSymbol(pb.active ? pb.symbol : lastBuiltSymbol, key);
   }
 
   // reflect activeGreek / nearTermFocus in the controls — used at init (when
@@ -1398,6 +1420,18 @@
         pinnedKey = null; // a pin names one symbol's strike — it must not survive into another symbol's mesh
         hoverKey = null;
         lastBuiltSymbol = sym;
+        // restore this symbol's remembered greek on an actual symbol change —
+        // but honor an explicit ?greek for the symbol it NAMED. The pin is
+        // symbol-scoped so a failed first load (which never reaches here) can't
+        // let the URL greek leak onto whatever symbol renders first instead.
+        // Runs after the fetch succeeded and right before buildScene, so chip +
+        // mesh stay in sync (a failed load never reaches here → no mismatch).
+        if (urlGreekSymbol === sym) {
+          urlGreekSymbol = null; // consumed: the named symbol has now rendered with its URL greek
+        } else {
+          var remembered = greekForSymbol(sym);
+          if (remembered && remembered !== activeGreek) { activeGreek = remembered; syncControlsToState(); }
+        }
       }
       var built = buildScene(json, activeGreek);
       if (!built) throw new Error('mesh had no strikes in range');
@@ -1744,9 +1778,14 @@
   var params = new URLSearchParams(location.search);
   var stored = readStoredPrefs();
   var finiteNum = function (v) { return typeof v === 'number' && isFinite(v); };
+  var initial = (params.get('symbol') || 'SPX').toUpperCase().replace(/[^A-Z^_.]/g, '') || 'SPX';
 
-  var gp = String(params.get('greek') || stored.greek || 'gamma').toLowerCase();
+  // greek precedence: URL ?greek (a shared link) > this symbol's remembered greek
+  // > the global last-used greek > default. When ?greek is present it "pins" the
+  // greek through the very first load so the per-symbol restore can't override it.
+  var gp = String(params.get('greek') || greekForSymbol(initial) || stored.greek || 'gamma').toLowerCase();
   if (GREEK_META[gp]) activeGreek = gp;
+  urlGreekSymbol = params.get('greek') ? initial : null;
 
   var fp = params.get('focus');
   if (fp == null) fp = stored.focus;
@@ -1775,7 +1814,6 @@
   refreshSymbolList();
   try { if (localStorage.getItem(LEGEND_LS_KEY) === '1') setLegendCollapsed(true); } catch (e) { /* private mode */ }
   resize();
-  var initial = (params.get('symbol') || 'SPX').toUpperCase().replace(/[^A-Z^_.]/g, '') || 'SPX';
   document.getElementById('symbol').value = initial;
   try { if (!localStorage.getItem(HELP_SEEN_KEY)) openHelp(); } catch (e) { /* private mode: just skip the intro */ }
   load(initial).then(scheduleNext);
