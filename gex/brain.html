@@ -44,7 +44,7 @@
   #stage.dragging{cursor:grabbing;}
 
   .hud{ position:fixed; pointer-events:none; z-index:5; }
-  .hud a, .hud button, .hud input{ pointer-events:auto; }
+  .hud a, .hud button, .hud input, .hud select{ pointer-events:auto; }
 
   #topbar{
     top:0; left:0; right:0;
@@ -176,6 +176,42 @@
   .tip-val.call{ color:var(--call); }
   .tip-val.put{ color:var(--put); }
 
+  #histToggle{
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-size:11px; letter-spacing:0.06em;
+    padding:6px 11px; border-radius:5px; border:1px solid var(--panel-border);
+    background:var(--panel); color:var(--muted); cursor:pointer;
+  }
+  #histToggle:hover{ color:var(--text); border-color:var(--faint); }
+  #histToggle[aria-pressed="true"]{ color:var(--spot); border-color:rgba(198,143,255,0.5); }
+
+  #pbBar{
+    position:fixed; bottom:46px; left:50%; transform:translateX(-50%);
+    display:none; align-items:center; gap:10px;
+    width:min(760px, 84vw);
+    background:rgba(16,22,29,0.88); border:1px solid var(--panel-border); border-radius:9px;
+    padding:9px 14px; z-index:6; backdrop-filter:blur(6px);
+  }
+  #pbBar.on{ display:flex; }
+  .pb-btn{
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-size:12px; padding:5px 10px; border-radius:5px;
+    border:1px solid var(--panel-border); background:var(--panel); color:var(--text); cursor:pointer;
+  }
+  .pb-btn:hover{ border-color:var(--faint); }
+  .pb-btn.live{ color:var(--call); border-color:rgba(53,214,176,0.4); }
+  #pbSlider{ flex:1; accent-color:var(--spot); min-width:120px; }
+  #pbTime{
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-variant-numeric:tabular-nums;
+    font-size:11px; letter-spacing:0.04em; color:var(--spot); white-space:nowrap;
+  }
+  #pbDay{
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-size:11px; background:var(--panel); color:var(--muted);
+    border:1px solid var(--panel-border); border-radius:5px; padding:4px 6px;
+  }
+
   #status{
     position:fixed; top:16px; right:22px;
     font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
@@ -208,6 +244,7 @@
   <div id="controls">
     <input type="text" id="symbol" value="SPX" spellcheck="false" aria-label="Ticker symbol">
     <button id="load">Load</button>
+    <button id="histToggle" aria-pressed="false" title="scrub archived snapshots">HISTORY</button>
     <div id="greeksWrap">
       <div class="greeks-caption">primary shape</div>
       <div id="greeks">
@@ -255,6 +292,14 @@
   <div class="stat"><span class="k" id="r-net-label">Net GEX</span><span class="v mono" id="r-gex">—</span></div>
   <div class="stat sep"><span class="k">As of</span><span class="v mono" id="r-asof" style="font-weight:500;font-size:11px;">—</span></div>
   <div id="satStats"></div>
+</div>
+
+<div class="hud" id="pbBar">
+  <button class="pb-btn" id="pbPlay" title="play through the day">&#9205;</button>
+  <select id="pbDay" aria-label="Archive day"></select>
+  <input type="range" id="pbSlider" min="0" max="0" step="1" value="0" aria-label="Snapshot position">
+  <span id="pbTime">&mdash;</span>
+  <button class="pb-btn live" id="pbLive" title="back to live polling">LIVE</button>
 </div>
 
 <div class="hud" id="caption">hover a node for values &middot; click to pin &middot; drag to orbit &middot; scroll to zoom &middot; <b>polling every 20s</b></div>

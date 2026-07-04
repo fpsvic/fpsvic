@@ -1001,6 +1001,7 @@
   });
 
   async function load(sym) {
+    if (pb.active) return; // no live load may touch the scene while playback owns it
     var seq = ++loadSeq;
     // currentSymbol updates optimistically so the poll loop retries the
     // REQUESTED symbol; the title/backLink update only on success, so the
@@ -1044,6 +1045,10 @@
   }
 
   function scheduleNext() {
+    // the single choke point for re-arming the poll: an orphaned
+    // load(...).then(scheduleNext) from a superseded live load must never
+    // resurrect polling while playback owns the view
+    if (pb.active) return;
     clearTimeout(pollTimer);
     pollTimer = setTimeout(function () { load(currentSymbol).then(scheduleNext); }, POLL_MS);
   }
@@ -1051,11 +1056,214 @@
   document.getElementById('load').addEventListener('click', function () {
     var sym = document.getElementById('symbol').value.trim().toUpperCase().replace(/[^A-Z^_.]/g, '');
     if (!sym) return;
+    if (pb.active) exitPlayback(false); // a symbol switch always lands on the live view
     clearTimeout(pollTimer);
     load(sym).then(scheduleNext);
   });
   document.getElementById('symbol').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') document.getElementById('load').click();
+  });
+
+  // ---------------------------------------------------------------- playback (archived snapshots)
+  // Scrub the day's archived /api/brain snapshots — the "is the wall building
+  // or pulling?" view. Entering playback pauses live polling and stashes the
+  // diff-glow baselines; stepping seeds them from the previously SHOWN
+  // snapshot, so the pulse layer becomes a genuine "what changed between these
+  // two moments" signal while scrubbing. Exiting restores the live baselines
+  // and resumes polling. Archived bodies are immutable, so fetched snapshots
+  // cache for the session.
+  var pb = {
+    active: false, entering: false, symbol: '', day: '', days: [], list: [], idx: -1,
+    cache: new Map(), playing: false, timer: null, savedPrev: null,
+  };
+  var pbShowSeq = 0;
+  var histToggle = document.getElementById('histToggle');
+  var pbBarEl = document.getElementById('pbBar');
+  var pbSlider = document.getElementById('pbSlider');
+  var pbTimeEl = document.getElementById('pbTime');
+  var pbDaySel = document.getElementById('pbDay');
+  var pbPlayBtn = document.getElementById('pbPlay');
+  var PB_STEP_MS = 700;
+
+  function pbLabel(fileName) {
+    var m = /^(\d{2})(\d{2})(\d{2})Z-([a-z]+)\.json$/.exec(fileName || '');
+    return m ? m[1] + ':' + m[2] + ':' + m[3] + 'Z · ' + m[4] : fileName || '—';
+  }
+
+  async function fetchHistoryList(sym, day) {
+    var q = 'api/brain/history?symbol=' + encodeURIComponent(sym) + (day ? '&day=' + encodeURIComponent(day) : '');
+    var res = await fetch(q, { headers: { accept: 'application/json' } });
+    var json = await res.json().catch(function () { return null; });
+    if (!res.ok || !json || json.error) throw new Error((json && json.error) || ('HTTP ' + res.status));
+    return json;
+  }
+
+  async function enterPlayback() {
+    if (pb.active || pb.entering) return;
+    pb.entering = true;
+    var sym = currentSymbol; // pin: a symbol switch mid-fetch must not produce a mixed-symbol playback
+    setStatus('loading archive…');
+    try {
+      var hist = await fetchHistoryList(sym);
+      if (pb.active || sym !== currentSymbol) return; // superseded while the list loaded
+      if (!hist.snapshots.length) {
+        banner('No archived snapshots for ' + sym + ' yet — the archive builds while the server runs.');
+        setStatus('live · ' + sym, false);
+        return;
+      }
+      pb.active = true;
+      pb.symbol = sym;
+      pb.day = hist.day;
+      pb.days = hist.days;
+      pb.list = hist.snapshots;
+      pb.idx = -1;
+      ++loadSeq;               // invalidate any in-flight live poll
+      clearTimeout(pollTimer); // pause live polling
+      pb.savedPrev = prevValues;
+      prevValues = {};
+      histToggle.setAttribute('aria-pressed', 'true');
+      pbBarEl.classList.add('on');
+      pbDaySel.replaceChildren();
+      pb.days.forEach(function (d) {
+        var opt = document.createElement('option');
+        opt.value = d; opt.textContent = d; opt.selected = d === pb.day;
+        pbDaySel.append(opt);
+      });
+      pbSlider.max = pb.list.length - 1;
+      showSnapshot(pb.list.length - 1); // land on the newest, scrub back from there
+    } catch (err) {
+      banner('History unavailable: ' + err.message);
+      setStatus('live · ' + currentSymbol, false);
+    } finally {
+      pb.entering = false;
+    }
+  }
+
+  function exitPlayback(returnToLive) {
+    if (!pb.active) return;
+    pb.active = false;
+    stopPlay();
+    pbBarEl.classList.remove('on');
+    histToggle.setAttribute('aria-pressed', 'false');
+    prevValues = pb.savedPrev || {};
+    pb.savedPrev = null;
+    if (returnToLive !== false) {
+      clearTimeout(pollTimer);
+      load(currentSymbol).then(scheduleNext);
+    }
+  }
+
+  function pbFetch(i) {
+    // key includes the SYMBOL: archive filenames are only HHMMSSZ-tag, and the
+    // macro sweep archives the whole watchlist in the same second — a day/file
+    // key alone would serve one symbol's book labeled as another's
+    var key = pb.symbol + '/' + pb.day + '/' + pb.list[i];
+    var hit = pb.cache.get(key);
+    if (hit) return hit; // resolved payload or in-flight promise — concurrent callers share it
+    if (pb.cache.size > 800) pb.cache.clear(); // ~25 MB worst case; immutable bodies re-fetch cheaply
+    var symbol = pb.symbol;
+    var promise = (async function () {
+      var res = await fetch('api/brain/snapshot?symbol=' + encodeURIComponent(symbol) + '&day=' + pb.day + '&file=' + pb.list[i],
+        { headers: { accept: 'application/json' } });
+      var json = await res.json().catch(function () { return null; });
+      if (!res.ok || !json || json.error) throw new Error((json && json.error) || ('HTTP ' + res.status));
+      if (json.symbol && json.symbol !== symbol) throw new Error('archive returned ' + json.symbol + ' for ' + symbol);
+      return json;
+    })();
+    pb.cache.set(key, promise);
+    promise.catch(function () { pb.cache.delete(key); }); // a failed fetch must not poison the cache
+    return promise;
+  }
+
+  async function showSnapshot(i) {
+    if (!pb.active || !pb.list.length) return;
+    i = Math.max(0, Math.min(pb.list.length - 1, i));
+    var seq = ++pbShowSeq;
+    try {
+      var payload = await pbFetch(i);
+      if (!pb.active || seq !== pbShowSeq) return; // superseded or exited mid-fetch
+      pb.idx = i;
+      pbSlider.value = i;
+      var built = buildScene(payload, activeGreek);
+      if (!built) return;
+      scene = built;
+      cameraDirty = true;
+      armPulses(scene);
+      lastPayload = payload; // greek chips + tooltips work on the frozen snapshot
+      refreshBaselines(payload);
+      updateReadout(payload, activeGreek);
+      updateLegend(activeGreek);
+      updateBandTags(payload);
+      reconcileTip();
+      pbTimeEl.textContent = pbLabel(pb.list[i]);
+      setStatus('PLAYBACK · ' + pb.symbol + ' · ' + pb.day + ' · ' + (i + 1) + '/' + pb.list.length);
+      requestRender();
+    } catch (err) {
+      if (!pb.active || seq !== pbShowSeq) return;
+      if (pb.playing) stopPlay(); // a failing snapshot must not be retried at the play cadence forever
+      setStatus('playback error', true);
+      banner('Could not load snapshot: ' + err.message);
+    }
+  }
+
+  function stopPlay() {
+    pb.playing = false;
+    clearInterval(pb.timer);
+    pbPlayBtn.textContent = '⏵';
+  }
+
+  pbPlayBtn.addEventListener('click', function () {
+    if (!pb.active) return;
+    if (pb.playing) { stopPlay(); return; }
+    // replay from the start: reset the index SYNCHRONOUSLY so the interval's
+    // first tick can't see the old at-the-end index and stop immediately
+    if (pb.idx >= pb.list.length - 1) pb.idx = -1;
+    pb.playing = true;
+    pbPlayBtn.textContent = '⏸';
+    pb.timer = setInterval(function () {
+      if (!pb.active || pb.idx >= pb.list.length - 1) { stopPlay(); return; }
+      showSnapshot(pb.idx + 1);
+    }, PB_STEP_MS);
+  });
+
+  pbSlider.addEventListener('input', function () {
+    stopPlay(); // manual scrubbing takes the wheel
+    showSnapshot(+pbSlider.value);
+  });
+
+  var pbDaySeq = 0;
+  pbDaySel.addEventListener('change', async function () {
+    stopPlay();
+    var seq = ++pbDaySeq; // last SELECTION wins, not last response
+    try {
+      var hist = await fetchHistoryList(pb.symbol, pbDaySel.value);
+      if (!pb.active || seq !== pbDaySeq) return;
+      if (!hist.snapshots.length) {
+        banner('No snapshots archived on ' + pbDaySel.value);
+        pbDaySel.value = pb.day; // the select must reflect the day actually shown
+        return;
+      }
+      pb.day = hist.day;
+      pb.list = hist.snapshots;
+      pbSlider.max = pb.list.length - 1;
+      showSnapshot(0); // a past day plays from its open
+    } catch (err) {
+      if (seq !== pbDaySeq) return;
+      banner('History unavailable: ' + err.message);
+      pbDaySel.value = pb.day;
+    }
+  });
+
+  document.getElementById('pbLive').addEventListener('click', function () { exitPlayback(true); });
+  histToggle.addEventListener('click', function () {
+    if (pb.active) exitPlayback(true); else enterPlayback();
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (!pb.active) return;
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
+    if (e.key === 'ArrowLeft') { stopPlay(); showSnapshot(pb.idx - 1); e.preventDefault(); }
+    else if (e.key === 'ArrowRight') { stopPlay(); showSnapshot(pb.idx + 1); e.preventDefault(); }
   });
 
   // initial canvas setup + seed from ?symbol=

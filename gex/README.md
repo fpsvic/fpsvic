@@ -94,9 +94,15 @@ concentrated, and on which greek, right now?*
   four greeks (`GexExposure.computeMeshBands`) plus the landmark levels, reusing the
   exact chain fetch/cache/parse path as the dashboard — the numbers can never drift
   between views. The response is memoized on the chain's cache TTL, and every fresh
-  build is archived to `gex/data/brain/` (the raw corpus for future playback;
-  `GEX_NO_ARCHIVE=1` disables). The page polls every 20 s and pulses nodes whose
-  exposure moved since the last poll (a live-only stand-in for real playback).
+  build is archived to `gex/data/brain/` (`GEX_NO_ARCHIVE=1` disables). The page polls
+  every 20 s and pulses nodes whose exposure moved since the last poll.
+- **Playback.** The **HISTORY** button scrubs the archived snapshots: a bottom bar with
+  a day picker, a slider over every snapshot the archiver wrote that day, play/pause
+  stepping, and arrow-key stepping. While scrubbing, the pulse layer shows what changed
+  *between the two viewed moments* — "is the wall building or pulling?" answered by
+  dragging a slider. Greek chips and node tooltips work on the frozen snapshot; **LIVE**
+  returns to polling. Served by `/api/brain/history` (list) and `/api/brain/snapshot`
+  (immutable archived bodies).
 
 ### The macro view
 

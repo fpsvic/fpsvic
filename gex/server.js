@@ -583,7 +583,9 @@ export async function scanRow(symbol, requestedSource = '', { refresh = false } 
  * one write per symbol per CACHE_MS (~60s) — roughly 10 MB/day/symbol with the
  * rounded payload. Writes are fire-and-forget: an archive failure must never
  * break the live view. GEX_NO_ARCHIVE=1 disables; GEX_ARCHIVE_DIR relocates. */
-const ARCHIVE_DIR = process.env.GEX_ARCHIVE_DIR || path.join(ROOT, 'data', 'brain');
+// resolved to an absolute path so the playback routes' confinement checks
+// hold no matter how GEX_ARCHIVE_DIR was spelled (relative, forward slashes)
+const ARCHIVE_DIR = path.resolve(process.env.GEX_ARCHIVE_DIR || path.join(ROOT, 'data', 'brain'));
 const ARCHIVE_OFF = !!process.env.GEX_NO_ARCHIVE;
 
 function archiveBrainSnapshot(symbol, body, now, sourceLabel) {
@@ -596,8 +598,13 @@ function archiveBrainSnapshot(symbol, body, now, sourceLabel) {
   // second — without the tag the second write would silently clobber the first
   const tag = /tradier/i.test(sourceLabel || '') ? 'tradier' : /cboe/i.test(sourceLabel || '') ? 'cboe' : 'src';
   const dir = path.join(ARCHIVE_DIR, symbol.replace(/[^A-Z0-9^_.]/gi, ''), day);
+  const file = path.join(dir, `${stamp}-${tag}.json`);
+  // write-then-rename: the history route lists this directory while writes
+  // land, and /api/brain/snapshot serves bodies with an immutable cache
+  // header — a half-written file must never be listable or servable
   fs.promises.mkdir(dir, { recursive: true })
-    .then(() => fs.promises.writeFile(path.join(dir, `${stamp}-${tag}.json`), body))
+    .then(() => fs.promises.writeFile(file + '.tmp', body))
+    .then(() => fs.promises.rename(file + '.tmp', file))
     .catch((err) => console.error(`[gex] archive ${symbol} failed: ${err.message}`));
 }
 
@@ -650,6 +657,73 @@ const server = http.createServer(async (req, res) => {
     const row = await scanRow(symbol, source, { refresh });
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(row));
+  }
+
+  // Playback: list the archived snapshots for a symbol (one day at a time,
+  // newest day by default) and serve individual archived bodies. Read-only
+  // views over gex/data/brain/ — the write side is archiveBrainSnapshot.
+  if (url.pathname === '/api/brain/history') {
+    const symbol = String(url.searchParams.get('symbol') || '').toUpperCase().replace(/[^A-Z^_.]/g, '');
+    const dayParam = String(url.searchParams.get('day') || '');
+    if (!symbol) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'missing ?symbol=' }));
+    }
+    const symDir = path.normalize(path.join(ARCHIVE_DIR, symbol));
+    if (!symDir.startsWith(ARCHIVE_DIR + path.sep)) { // '.'-laden symbols must never escape (or BE) the archive root
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'bad symbol' }));
+    }
+    let days = [];
+    try {
+      days = (await fs.promises.readdir(symDir)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+    } catch { /* no archive for this symbol yet */ }
+    if (!days.length) {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ symbol, days: [], day: null, snapshots: [] }));
+    }
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(dayParam) && days.includes(dayParam) ? dayParam : days[days.length - 1];
+    let files = [];
+    try {
+      files = (await fs.promises.readdir(path.join(symDir, day))).filter((f) => /^\d{6}Z-[a-z]{1,12}\.json$/.test(f)).sort();
+    } catch { /* raced a cleanup; empty is fine */ }
+    // one SOURCE per timeline: the brain page archives Tradier-first bodies
+    // while the macro sweep archives CBOE-first ones for the same symbol —
+    // interleaving them would make adjacent-snapshot diffs pulse on source
+    // switches instead of book changes. Serve the majority tag's series.
+    const byTag = {};
+    for (const f of files) {
+      const tag = f.slice(8, -5); // 143205Z-<tag>.json
+      (byTag[tag] = byTag[tag] || []).push(f);
+    }
+    const tags = Object.keys(byTag).sort((a, b) => byTag[b].length - byTag[a].length);
+    const tag = tags[0] || null;
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify({ symbol, days, day, tag, tags, snapshots: tag ? byTag[tag] : [] }));
+  }
+
+  if (url.pathname === '/api/brain/snapshot') {
+    const symbol = String(url.searchParams.get('symbol') || '').toUpperCase().replace(/[^A-Z^_.]/g, '');
+    const day = String(url.searchParams.get('day') || '');
+    const file = String(url.searchParams.get('file') || '');
+    if (!symbol || !/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^\d{6}Z-[a-z]{1,12}\.json$/.test(file)) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'need ?symbol=&day=YYYY-MM-DD&file=HHMMSSZ-src.json' }));
+    }
+    const p = path.normalize(path.join(ARCHIVE_DIR, symbol, day, file));
+    if (!p.startsWith(ARCHIVE_DIR + path.sep)) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'bad path' }));
+    }
+    try {
+      const body = await fs.promises.readFile(p, 'utf8');
+      // archived bodies are immutable — let the browser cache them hard
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=86400, immutable' });
+      return res.end(body);
+    } catch {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'snapshot not found' }));
+    }
   }
 
   // One snapshot for the 3D "brain" mesh: strike x expiry-band grids of all

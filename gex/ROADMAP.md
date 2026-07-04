@@ -15,6 +15,15 @@ the same batch: every fresh brain build lands in `gex/data/brain/` (gitignored;
 `GEX_NO_ARCHIVE=1` to disable). Still open from fix-first: #6
 (node tooltip), #9 (synapse sign legibility), #10 (strike ticks), #12–15, rest of #16.
 
+**Status 2026-07-04, playback UI (roadmap #2, read side): landed.** HISTORY button on the
+brain view scrubs the day's archived snapshots: day picker, slider, play/pause, arrow
+keys; pulses show inter-snapshot changes while scrubbing; greek chips + tooltips work on
+frozen snapshots; LIVE resumes polling. `/api/brain/history` lists a symbol's archived
+days/files, `/api/brain/snapshot` serves immutable bodies (path-confined, browser-cached).
+The archiver (write side) had been accumulating since it shipped — 500+ snapshots on day
+one across the watchlist. Remaining on #2: retention policy for `gex/data/` growth
+(~10 MB/day/symbol) and richer diff modes ("since open", sparklines on pinned nodes).
+
 **Status 2026-07-03, node inspection (fix-first #6) + per-band landmarks (roadmap #3): landed.**
 Hover any node for strike/band + all four raw dollar exposures (DOM tooltip, color-coded
 per greek, primary marked "(shape)"); click to PIN — pinned nodes keep ring + tooltip
