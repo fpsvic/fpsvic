@@ -574,6 +574,29 @@ export async function scanRow(symbol, requestedSource = '', { refresh = false } 
   }
 }
 
+// ---------------------------------------------------------------- brain snapshot archive
+
+/* Every FRESH /api/brain build is written to gex/data/brain/{SYMBOL}/{YYYY-MM-DD}/{HHMMSS}Z.json
+ * (UTC). This is the raw corpus for history/playback (gex/ROADMAP.md #2): the
+ * delayed feed can't be re-queried for the past, so a snapshot not written the
+ * moment it was computed is gone forever. Memoization upstream caps the rate at
+ * one write per symbol per CACHE_MS (~60s) — roughly 10 MB/day/symbol with the
+ * rounded payload. Writes are fire-and-forget: an archive failure must never
+ * break the live view. GEX_NO_ARCHIVE=1 disables; GEX_ARCHIVE_DIR relocates. */
+const ARCHIVE_DIR = process.env.GEX_ARCHIVE_DIR || path.join(ROOT, 'data', 'brain');
+const ARCHIVE_OFF = !!process.env.GEX_NO_ARCHIVE;
+
+function archiveBrainSnapshot(symbol, body, now) {
+  if (ARCHIVE_OFF) return;
+  const iso = new Date(now).toISOString();               // 2026-07-03T14:32:05.123Z
+  const day = iso.slice(0, 10);
+  const stamp = iso.slice(11, 19).replace(/:/g, '') + 'Z'; // 143205Z
+  const dir = path.join(ARCHIVE_DIR, symbol.replace(/[^A-Z0-9^_.]/gi, ''), day);
+  fs.promises.mkdir(dir, { recursive: true })
+    .then(() => fs.promises.writeFile(path.join(dir, `${stamp}.json`), body))
+    .catch((err) => console.error(`[gex] archive ${symbol} failed: ${err.message}`));
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -625,10 +648,16 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(row));
   }
 
-  // One snapshot for the 3D "brain" mesh: strike x expiry-band net GEX grid
-  // plus the same landmark levels the dashboard shows (walls, flip, net GEX).
-  // Reuses the exact chain fetch/cache/parse path as /api/chain, so it never
-  // drifts from the numbers the dashboard computes for the same ticker.
+  // One snapshot for the 3D "brain" mesh: strike x expiry-band grids of all
+  // four greeks plus the same landmark levels the dashboard shows. Reuses the
+  // exact chain fetch/cache/parse path as /api/chain, so it never drifts from
+  // the numbers the dashboard computes for the same ticker. The whole response
+  // is memoized on the chain's TTL: computeMetrics re-prices the book at 81
+  // spot levels (~0.5s of CPU on SPX), which must not run per 20s client poll
+  // against a 60s-cached chain. The clock is pinned once per build so band
+  // membership (dte) can't shift between rows of the same payload, and each
+  // FRESH build is archived to disk — history that isn't written now can never
+  // be backfilled (see gex/ROADMAP.md).
   if (url.pathname === '/api/brain') {
     const symbol = String(url.searchParams.get('symbol') || '').toUpperCase().replace(/[^A-Z^_.]/g, '');
     const source = { tradier: 'tradier', cboe: 'cboe' }[url.searchParams.get('source')] || '';
@@ -637,32 +666,49 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: 'missing ?symbol=' }));
     }
     try {
-      const body = await fetchChain(symbol, source);
-      const chain = GexExposure.parseCboe(JSON.parse(body), symbol);
-      const overall = GexExposure.computeMetrics(chain, 'all');
-      const mesh = GexExposure.computeMeshBands(chain);
+      const brainBody = await cached(`brain:${source || 'auto'}:${symbol}`, CACHE_MS, async () => {
+        const chainBody = await fetchChain(symbol, source);
+        const now = Date.now();
+        const chain = GexExposure.parseCboe(JSON.parse(chainBody), symbol, now);
+        const overall = GexExposure.computeMetrics(chain, 'all');
+        const mesh = GexExposure.computeMeshBands(chain);
+        // dollar exposures round to whole dollars, price levels to cents —
+        // halves the payload and keeps archived snapshots diff-friendly
+        const r2 = (v) => (v == null || !isFinite(v) ? null : Math.round(v * 100) / 100);
+        const rInt = (v) => (v == null || !isFinite(v) ? null : Math.round(v));
+        const payload = JSON.stringify({
+          symbol: chain.symbol,
+          spot: chain.spot,
+          asof: chain.timestamp,
+          computedAt: new Date(now).toISOString(),
+          source: chain.source,
+          strikes: mesh.strikes,
+          bands: mesh.bands.map((b) => ({
+            name: b.name,
+            gex: b.gex.map(rInt),
+            vanna: b.vanna.map(rInt),
+            charm: b.charm.map(rInt),
+            delta: b.delta.map(rInt),
+          })),
+          landmarks: {
+            callWall: overall.callWall ? overall.callWall.strike : null,
+            putWall: overall.putWall ? overall.putWall.strike : null,
+            flip: r2(overall.flip),
+            vannaFlip: r2(overall.vannaFlip),
+            charmFlip: r2(overall.charmFlip),
+            netGex: rInt(overall.netGex),
+            netVanna: rInt(overall.netVanna),
+            netCharm: rInt(overall.netCharm),
+            // delta imbalance (call-side minus put-side), restricted to the
+            // mesh's +/-rangePct strike window like the per-node values
+            netDelta: rInt(mesh.bands.reduce((sum, b) => sum + b.delta.reduce((s, v) => s + v, 0), 0)),
+          },
+        });
+        archiveBrainSnapshot(chain.symbol, payload, now);
+        return payload;
+      });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      return res.end(JSON.stringify({
-        symbol: chain.symbol,
-        spot: chain.spot,
-        asof: chain.timestamp,
-        source: chain.source,
-        strikes: mesh.strikes,
-        bands: mesh.bands,
-        landmarks: {
-          callWall: overall.callWall ? overall.callWall.strike : null,
-          putWall: overall.putWall ? overall.putWall.strike : null,
-          flip: overall.flip,
-          vannaFlip: overall.vannaFlip,
-          charmFlip: overall.charmFlip,
-          netGex: overall.netGex,
-          netVanna: overall.netVanna,
-          netCharm: overall.netCharm,
-          // netDelta is restricted to the mesh's +/-rangePct strike window
-          // (computeMetrics has no all-chain net-delta figure to match against)
-          netDelta: mesh.bands.reduce((sum, b) => sum + b.delta.reduce((s, v) => s + v, 0), 0),
-        },
-      }));
+      return res.end(brainBody);
     } catch (err) {
       res.writeHead(502, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ error: `could not build brain mesh for ${symbol}: ${err.message}` }));
@@ -712,6 +758,7 @@ if (!process.env.GEX_NO_LISTEN) {
     console.log(`Personal GEX running at http://localhost:${PORT}`);
     console.log('Data source: %s', TRADIER_TOKEN ? `Tradier (${TRADIER_BASE})` : 'CBOE delayed quotes');
     console.log('AI reads: %s', ANTHROPIC_KEY ? `enabled (${ANTHROPIC_MODEL}, effort ${ANTHROPIC_EFFORT})` : 'disabled (set ANTHROPIC_API_KEY in gex/.env)');
+    console.log('Brain archive: %s', ARCHIVE_OFF ? 'disabled (GEX_NO_ARCHIVE)' : ARCHIVE_DIR);
     console.log('Scanner: http://localhost:%d/  ·  single-ticker dashboard: http://localhost:%d/index.html?symbol=SPX (or ?demo=1)', PORT, PORT);
   });
 }

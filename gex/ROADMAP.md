@@ -4,6 +4,17 @@ Produced by a 5-dimension audit (frontend bugs, financial math, render perf, tra
 44 raw findings, 34 confirmed after adversarial verification) at snapshot commit `2c74bc3`, 2026-07-03.
 This is the working backlog — prune items as they land.
 
+**Status 2026-07-03, "trust the picture" batch:** fix-first **#1** (painter's sort), **#2**
+(expired contracts — now DST-aware NY-close settlement via `nyCloseUtc`, dropped past the
+15-min feed delay), **#3** (memoized `/api/brain` + pinned clock), **#5 in full** (delta is
+now the call-minus-put imbalance, restoring a real sign channel — roadmap #7 effectively
+done with it), **#7** (off-mesh landmarks labeled instead of snapped), and **#8** (walls/flip
+drawn as cross-shell beams, "(all expiries)" in the legend) are **landed**, plus the charm
+hedge-direction copy from #16. The **snapshot archiver** (roadmap #2's write side) ships with
+the same batch: every fresh brain build lands in `gex/data/brain/` (gitignored;
+`GEX_NO_ARCHIVE=1` to disable). Still open from fix-first: #4/#11 (render pipeline), #6
+(node tooltip), #9 (synapse sign legibility), #10 (strike ticks), #12–15, rest of #16.
+
 ## 1. STATE
 
 The GEX Brain is live and self-contained: `gex/brain.html` + `gex/brain.js` (classic script, zero deps, Canvas 2D with hand-rolled Y/X rotation + perspective in `project()`, brain.js:251–261) render four nested dome shells (0DTE/Weekly/Monthly/LEAP, `BAND_META` brain.js:44–49) of strike nodes fed by `GET /api/brain?symbol=X` (server.js:632+), which reuses the same fetch/cache/parse path as the dashboard and returns per-band arrays for all four greeks plus landmarks from `GexExposure.computeMeshBands()` / `computeMetrics()` (exposure.js). The primary greek (chip-selectable, no refetch — all four ship in every payload) deforms the shell via `bump = g * BUMP_SCALE` with global per-greek normalization (deliberate); the other three greeks render as fixed-angle satellite dots per node. Working today: spot beam with gradient + label, call/put wall halos on the 0DTE ring, pulsing flip ring, on-mesh labels with a functioning anti-overlap pass (brain.js:426–468), drag-rotate/wheel-zoom from a tuned static default camera, near-term-focus dimming applied at render time (instant toggle), `prefers-reduced-motion` support, a 20s poll loop with stale-response guarding via `loadSeq`, and per-greek diff-glow pulse seeding (brain.js:121–157). The core concept — one brain, all greeks, expiry-separated — is implemented end to end and renders correctly at the default camera. What's broken underneath: depth sort is inverted, per-frame cost is dominated by ~1,400–2,500 `shadowBlur` passes at unconditional 60fps, several landmarks are all-expiry aggregates drawn as if they were 0DTE facts, expired contracts contaminate the 0DTE band after the close, and the server recomputes ~0.5s of blocking CPU per poll off a 60s-cached body.

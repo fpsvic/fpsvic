@@ -88,14 +88,38 @@ test('parseCboe strips a leading underscore from the returned symbol', () => {
   assert.equal(E.parseCboe(p, 'SPX', NOW).symbol, 'SPX');
 });
 
-test('parseCboe drops malformed symbols and >12h-stale expiries', () => {
+test('parseCboe drops malformed symbols and settled expiries', () => {
   const p = twoLegged(100, 100);
   p.data.options.push({ option: 'not-an-occ-symbol', open_interest: 999, bid: 1, ask: 1 });
-  // an expiry two days in the past must be excluded
-  const [y, m, d] = ymd(NOW - 2 * 86400e3);
+  // yesterday's expiry settled at yesterday's close — must be excluded
+  const [y, m, d] = ymd(NOW - 1 * 86400e3);
   p.data.options.push({ option: occSym('XYZ', y, m, d, 'C', 100), open_interest: 999, bid: 1, ask: 1, iv: 0.2 });
   const ch = E.parseCboe(p, 'XYZ', NOW);
   assert.equal(ch.options.length, 2, 'only the two valid future legs survive');
+});
+
+test('nyCloseUtc is DST-aware: EST winter close is 21:00 UTC, EDT summer close is 20:00 UTC', () => {
+  assert.equal(E.nyCloseUtc(2026, 1, 15), Date.UTC(2026, 0, 15, 21, 0, 0), 'January (EST) -> 21:00 UTC');
+  assert.equal(E.nyCloseUtc(2026, 7, 3), Date.UTC(2026, 6, 3, 20, 0, 0), 'July (EDT) -> 20:00 UTC');
+});
+
+test('parseCboe: same-day contracts stay alive through the close, drop once settled past the feed delay', () => {
+  const [y, m, d] = ymd(NOW); // Jan 15 — EST, so today\'s close is 21:00 UTC
+  const todayLeg = (root) => {
+    const p = twoLegged(100, 100, { root, dte: 30 }); // a live far leg keeps the parse valid
+    p.data.options.push({ option: occSym(root, y, m, d, 'C', 100), open_interest: 500, bid: 1, ask: 1.1, iv: 0.2 });
+    return p;
+  };
+  // 3:30pm ET (20:30 UTC): the fixed 20:00-UTC stamp would call this settled — it must be alive
+  const lastHour = E.parseCboe(todayLeg('AAA'), 'AAA', Date.UTC(2026, 0, 15, 20, 30, 0));
+  assert.equal(lastHour.options.length, 3, 'live 0DTE survives the last trading hour in winter');
+  assert.ok(lastHour.options.every((o) => o.dte >= 1), 'a live same-day contract is dte 1, not 0');
+  // 4:10pm ET: settled 10 min ago, still inside the 15-min delayed-feed slack -> kept
+  const justSettled = E.parseCboe(todayLeg('BBB'), 'BBB', Date.UTC(2026, 0, 15, 21, 10, 0));
+  assert.equal(justSettled.options.length, 3, 'contract settled less than the feed delay ago is kept');
+  // 4:30pm ET: settled past the slack -> dropped (no more T-floor gamma monsters after hours)
+  const evening = E.parseCboe(todayLeg('CCC'), 'CCC', Date.UTC(2026, 0, 15, 21, 30, 0));
+  assert.equal(evening.options.length, 2, 'settled contract is gone from the evening chain');
 });
 
 test('parseCboe throws on unusable payloads', () => {
@@ -220,12 +244,11 @@ test('computeMeshBands: distinct bands can disagree in sign at the same strike, 
   const monthly = mesh.bands.find((b) => b.name === 'Monthly');
   assert.ok(zeroDte.gex[idx] < 0, '0DTE band is put-heavy (sulcus) on gamma at strike 105');
   assert.ok(monthly.gex[idx] > 0, 'Monthly band is call-heavy (gyrus) on gamma at the same strike');
-  // delta: dealer is short 500 puts near-term (put delta is negative, so
-  // -1 * negative -> positive dealer delta) and long 500 calls far-term
-  // (+1 * positive -> positive dealer delta) — both land long delta here,
-  // unlike gamma, illustrating the greeks are genuinely independent per band.
-  assert.ok(zeroDte.delta[idx] > 0, '0DTE band: short puts -> dealer long delta');
-  assert.ok(monthly.delta[idx] > 0, 'Monthly band: long calls -> dealer long delta');
+  // delta is the IMBALANCE (raw delta * OI, no dealer sign): the put-only near
+  // band reads negative (put-side directional OI), the call-only far band
+  // positive — dealer NET delta would be positive in both, a dead sign channel.
+  assert.ok(zeroDte.delta[idx] < 0, '0DTE band: puts only -> negative delta imbalance');
+  assert.ok(monthly.delta[idx] > 0, 'Monthly band: calls only -> positive delta imbalance');
 });
 
 // ---------------------------------------------------------------- buildVolMetrics

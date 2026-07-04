@@ -63,6 +63,39 @@
   // e.g. "SPXW250702C06200000" -> root SPXW, 2025-07-02, Call, 6200
   const OCC_RE = /^([A-Z]+)(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/;
 
+  /* 4:00pm America/New_York on a given calendar date, as a UTC timestamp —
+   * DST-aware without dependencies (EDT is 20:00 UTC, EST is 21:00 UTC). A
+   * fixed 20:00 UTC stamp is an hour early all winter, which would mark live
+   * 0DTE contracts as settled for the entire last hour of the session — the
+   * exact window a short-term trader cares about most. Intl gives the real
+   * offset for that date; memoized because parseCboe calls this per option row. */
+  const NY_CLOSE_CACHE = new Map();
+  function nyCloseUtc(y, mo, d) {
+    const key = y * 10000 + mo * 100 + d;
+    let close = NY_CLOSE_CACHE.get(key);
+    if (close !== undefined) return close;
+    let offset = -5;
+    try {
+      // noon UTC is mid-morning in New York, safely inside the same civil date
+      const tz = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'shortOffset' })
+        .formatToParts(Date.UTC(y, mo - 1, d, 12, 0, 0))
+        .find((p) => p.type === 'timeZoneName');
+      const m = /GMT([+-]\d+)/.exec(tz ? tz.value : '');
+      if (m) offset = +m[1];
+    } catch { /* no Intl/ICU: fall back to a rough DST-by-month approximation */
+      if (mo >= 4 && mo <= 10) offset = -4;
+    }
+    close = Date.UTC(y, mo - 1, d, 16 - offset, 0, 0); // 4pm NY == (16 - offset):00 UTC
+    NY_CLOSE_CACHE.set(key, close);
+    return close;
+  }
+
+  // Settled contracts create no hedging need, but the delayed feed's quotes/OI
+  // describe the world ~15 minutes ago — so a contract only drops out once it
+  // has been settled longer than the feed delay. Anything younger would still
+  // have been alive in the data we're actually looking at.
+  const SETTLE_SLACK_MS = 15 * 60e3;
+
   /* Parse a CBOE (or CBOE-shaped) delayed-quotes payload into the internal chain
    * format app.js and the scanner both consume. `now` is injectable so tests are
    * deterministic (expiry cutoff + T floor depend on the clock). */
@@ -79,9 +112,11 @@
       // regardless of OI, and its stop rule needs to SEE the zero-bid strikes
       // (exposure math filters to oi > 0 downstream)
       const oi = Number(o.open_interest ?? o.oi ?? 0);
-      // expiries settle end of day; approximate 4pm ET as 20:00 UTC
-      const expiry = Date.UTC(2000 + +m[2], +m[3] - 1, +m[4], 20, 0, 0);
-      if (expiry < now - 12 * 3600e3) continue;
+      // DST-aware 4pm-ET settlement; drop contracts settled longer than the
+      // feed delay — an expired 0DTE priced at the 15-minute T floor otherwise
+      // dwarfs the live book (gamma ~ 1/sqrt(T)) all evening and overnight
+      const expiry = nyCloseUtc(2000 + +m[2], +m[3], +m[4]);
+      if (expiry <= now - SETTLE_SLACK_MS) continue;
       options.push({
         root: m[1], // e.g. SPX vs SPXW — distinct settlement series
         type: m[5],
@@ -222,9 +257,12 @@
    * of the four greeks. Strikes are restricted to +/- rangePct of spot
    * (matching the profile chart's default window) so a mesh isn't built from
    * thousands of illiquid deep OTM strikes. Pure given `chain`.
-   *   dollar-delta convention matches gex/vanna/charm: sign * greek * oi *
-   *   CONTRACT_SIZE * S (dealer notional delta from OI at that strike/expiry;
-   *   there is no natural "flip" for it the way there is for gamma/vanna/charm). */
+   *   delta is the one greek NOT under the dealer sign convention: dealer net
+   *   delta (long calls, short puts) is positive at every strike by
+   *   construction — a dead sign channel. Instead delta here is the
+   *   IMBALANCE, sum of raw delta * OI (call delta positive, put delta
+   *   negative): positive = the strike's directional OI is call-side, negative
+   *   = put-side. No natural zero-crossing "flip" is derived from it. */
   function computeMeshBands(chain, bandDefs = DEFAULT_MESH_BANDS, rangePct = PROFILE_RANGE) {
     const S = chain.spot;
     const lo = S * (1 - rangePct), hi = S * (1 + rangePct);
@@ -245,7 +283,8 @@
         gex.set(strike, gex.get(strike) + sign * gk.gamma * o.oi * CONTRACT_SIZE * S * S * 0.01);
         vanna.set(strike, vanna.get(strike) + sign * gk.vanna * o.oi * CONTRACT_SIZE * S * 0.01);
         charm.set(strike, charm.get(strike) + sign * (gk.charm / 365) * o.oi * CONTRACT_SIZE * S);
-        delta.set(strike, delta.get(strike) + sign * gk.delta * o.oi * CONTRACT_SIZE * S);
+        // no dealer sign: raw delta*OI so calls push positive, puts negative (imbalance)
+        delta.set(strike, delta.get(strike) + gk.delta * o.oi * CONTRACT_SIZE * S);
       }
       return {
         name: def.name,
@@ -439,7 +478,7 @@
     RISK_FREE, CONTRACT_SIZE, PROFILE_POINTS, PROFILE_RANGE, MS_YEAR,
     normPdf, bsGreeks, parseCboe, optionGreeks, dealerSign, computeMetrics, zeroCrossing,
     buildVolMetrics, buildSnapshot, scanRowFromChain,
-    DEFAULT_MESH_BANDS, computeMeshBands,
+    DEFAULT_MESH_BANDS, computeMeshBands, nyCloseUtc,
   };
   root.GexExposure = GexExposure;
   if (typeof module !== 'undefined' && module.exports) module.exports = GexExposure;

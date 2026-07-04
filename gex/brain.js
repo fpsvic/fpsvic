@@ -58,29 +58,29 @@
       key: 'gex', subLabel: 'gamma', short: 'Gamma', angle: 0, dotColor: [53, 214, 176],
       posWord: 'Gyrus', posDesc: '(bulge out) — call-side gamma, dealer-stabilizing',
       negWord: 'Sulcus', negDesc: '(fold in) — put-side gamma, dealer-destabilizing',
-      flipField: 'flip', flipWord: 'Flip ring', flipDesc: '— nearest zero-gamma crossing',
+      flipField: 'flip', flipWord: 'Flip beam', flipDesc: '— zero-gamma crossing, all expiries',
       netLabel: 'Net GEX', netField: 'netGex', flipLabel: 'Gamma flip',
     },
     vanna: {
       key: 'vanna', subLabel: 'vanna', short: 'Vanna', angle: 90, dotColor: [90, 160, 255],
       posWord: 'Gyrus', posDesc: '(bulge out) — positive vanna, delta rises as vol rises',
       negWord: 'Sulcus', negDesc: '(fold in) — negative vanna, delta falls as vol rises',
-      flipField: 'vannaFlip', flipWord: 'Flip ring', flipDesc: '— nearest zero-vanna crossing',
+      flipField: 'vannaFlip', flipWord: 'Flip beam', flipDesc: '— zero-vanna crossing, all expiries',
       netLabel: 'Net Vanna', netField: 'netVanna', flipLabel: 'Vanna flip',
     },
     charm: {
       key: 'charm', subLabel: 'charm', short: 'Charm', angle: 180, dotColor: [255, 196, 80],
-      posWord: 'Gyrus', posDesc: '(bulge out) — positive charm, delta hedge builds long as time passes',
-      negWord: 'Sulcus', negDesc: '(fold in) — negative charm, delta hedge decays short as time passes',
-      flipField: 'charmFlip', flipWord: 'Flip ring', flipDesc: '— nearest zero-charm crossing',
+      posWord: 'Gyrus', posDesc: '(bulge out) — positive charm: book delta builds daily, dealers sell to re-hedge',
+      negWord: 'Sulcus', negDesc: '(fold in) — negative charm: book delta bleeds daily, dealers buy to re-hedge',
+      flipField: 'charmFlip', flipWord: 'Flip beam', flipDesc: '— zero-charm crossing, all expiries',
       netLabel: 'Net Charm', netField: 'netCharm', flipLabel: 'Charm flip',
     },
     delta: {
       key: 'delta', subLabel: 'delta', short: 'Delta', angle: 270, dotColor: [255, 110, 180],
-      posWord: 'Gyrus', posDesc: '(bulge out) — dealer net long delta at this strike/expiry',
-      negWord: 'Sulcus', negDesc: '(fold in) — dealer net short delta at this strike/expiry',
+      posWord: 'Gyrus', posDesc: '(bulge out) — call-side delta OI dominates this strike/expiry',
+      negWord: 'Sulcus', negDesc: '(fold in) — put-side delta OI dominates (dealers long via short puts)',
       flipField: null, flipWord: null, flipDesc: null,
-      netLabel: 'Net Delta (in range)', netField: 'netDelta', flipLabel: null,
+      netLabel: 'Net Δ imbalance', netField: 'netDelta', flipLabel: null,
     },
   };
   var GREEK_ORDER = ['gamma', 'vanna', 'charm', 'delta']; // fixed synapse angle slots, stable across primary switches
@@ -93,7 +93,7 @@
   }
 
   // Mutable scene state, rebuilt whenever a new snapshot lands OR the active greek changes.
-  var scene = { nodes: [], ringEdges: [], radialEdges: [], nodeGrid: {}, spotBeam: [], landmarks: null, strikes: [] };
+  var scene = { nodes: [], ringEdges: [], radialEdges: [], nodeGrid: {}, beams: [], strikes: [] };
   var lastPayload = null;
   var prevValues = {}; // greekKey -> Map("band_strike" -> normalized value), for the diff-glow, kept per-greek so switching tabs never fakes a pulse
 
@@ -172,31 +172,59 @@
       }
     }
 
-    // spot beam: nearest strike index to spot
-    var spotIdx = 0, bestDist = Infinity;
-    strikes.forEach(function (s, i) { var d = Math.abs(s - payload.spot); if (d < bestDist) { bestDist = d; spotIdx = i; } });
-    var spotTheta = (spotIdx / Math.max(1, strikes.length - 1) - 0.5) * THETA_SPAN;
-    var spotBeam = [];
-    for (var rr = 60; rr <= 300; rr += 6) {
-      spotBeam.push({ x: rr * Math.sin(spotTheta), y: -9, z: rr * Math.cos(spotTheta) });
+    // Landmark beams. Walls and the flip are ALL-EXPIRY aggregates (computed
+    // from the whole book in computeMetrics), so they render like the spot
+    // beam — vertical markers cutting through every shell — NOT as node
+    // decorations on one ring, which would misread as 0DTE-specific levels.
+    // A landmark whose price falls outside the mesh's strike window gets an
+    // edge-clamped "(off-mesh)" label and no beam, instead of silently
+    // snapping to the nearest in-range strike and drawing the wall somewhere
+    // it isn't.
+    function fracIdx(price) {
+      if (price == null || !isFinite(price)) return null;
+      if (price < strikes[0] || price > strikes[strikes.length - 1]) return null;
+      if (strikes.length < 2) return 0; // single-strike mesh: range check above already pinned it
+      var i = 0;
+      while (i < strikes.length - 2 && strikes[i + 1] < price) i++;
+      var lo = strikes[i], hi = strikes[i + 1];
+      return hi === lo ? i : i + (price - lo) / (hi - lo);
+    }
+    function beamPoints(idx) {
+      var theta = (idx / Math.max(1, strikes.length - 1) - 0.5) * THETA_SPAN;
+      var pts = [];
+      for (var rr = 60; rr <= 300; rr += 6) {
+        pts.push({ x: rr * Math.sin(theta), y: -9, z: rr * Math.cos(theta) });
+      }
+      return pts;
     }
 
-    function nearestIdx(price) {
-      if (price == null) return -1;
-      var idx = -1, best = Infinity;
-      strikes.forEach(function (s, i) { var d = Math.abs(s - price); if (d < best) { best = d; idx = i; } });
-      return idx;
+    var beams = [];
+    function addBeam(label, price, rgb, opts) {
+      if (price == null || !isFinite(price)) return;
+      var idx = fracIdx(price);
+      var offMesh = idx == null || !isFinite(idx); // non-finite index must never build an "on-mesh" beam
+      var clamped = offMesh ? (price < strikes[0] ? 0 : strikes.length - 1) : idx;
+      beams.push({
+        label: label, price: price, rgb: rgb,
+        offMesh: offMesh,
+        points: beamPoints(clamped),
+        thick: !!(opts && opts.thick),
+        labelEnd: (opts && opts.labelEnd) || 'top', // which beam end anchors the price label
+      });
     }
+    var lmRaw = payload.landmarks;
     var meta = GREEK_META[greekKey];
-    var flipPrice = meta.flipField ? payload.landmarks[meta.flipField] : null;
-    var landmarks = {
-      callWallIdx: nearestIdx(payload.landmarks.callWall),
-      putWallIdx: nearestIdx(payload.landmarks.putWall),
-      flipIdx: nearestIdx(flipPrice),
-      raw: payload.landmarks,
-    };
+    var flipPrice = meta.flipField ? lmRaw[meta.flipField] : null;
+    addBeam('SPOT', payload.spot, [198, 143, 255], { thick: true, labelEnd: 'top' });
+    if (lmRaw.callWall != null && lmRaw.callWall === lmRaw.putWall) {
+      addBeam('CALL+PUT WALL', lmRaw.callWall, [53, 214, 176], { labelEnd: 'top' });
+    } else {
+      addBeam('CALL WALL', lmRaw.callWall, [53, 214, 176], { labelEnd: 'top' });
+      addBeam('PUT WALL', lmRaw.putWall, [255, 122, 82], { labelEnd: 'bottom' });
+    }
+    if (meta.flipLabel) addBeam(meta.flipLabel.toUpperCase(), flipPrice, [230, 236, 242], { labelEnd: 'bottom' });
 
-    return { nodes: nodes, ringEdges: ringEdges, radialEdges: radialEdges, nodeGrid: nodeGrid, spotBeam: spotBeam, landmarks: landmarks, strikes: strikes, spot: payload.spot };
+    return { nodes: nodes, ringEdges: ringEdges, radialEdges: radialEdges, nodeGrid: nodeGrid, beams: beams, strikes: strikes, spot: payload.spot };
   }
 
   // ---------------------------------------------------------------- camera / interaction
@@ -304,7 +332,9 @@
         var p = project(n, cx, cy, scale);
         return { n: n, p: p, mag: breathe * pulseBoost, glow: decay };
       });
-      var byZ = proj.slice().sort(function (a, b) { return a.p.z - b.p.z; });
+      // painter's algorithm: larger z is FARTHER under this projection
+      // (f = focal/(focal+z)), so draw order must be descending z — far first
+      var byZ = proj.slice().sort(function (a, b) { return b.p.z - a.p.z; });
 
       var edgeSegs = scene.ringEdges.map(function (e) {
         var a = project(e[0], cx, cy, scale), b = project(e[1], cx, cy, scale);
@@ -314,7 +344,7 @@
         var emph = (emphasisFor(e[0].band) + emphasisFor(e[1].band)) / 2;
         return { a: a, b: b, z: (a.z + b.z) / 2, g: (e[0].g + e[1].g) / 2, radial: true, emph: emph };
       }));
-      edgeSegs.sort(function (a, b) { return a.z - b.z; });
+      edgeSegs.sort(function (a, b) { return b.z - a.z; });
       edgeSegs.forEach(function (e) {
         ctx.beginPath();
         ctx.moveTo(e.a.x, e.a.y);
@@ -324,47 +354,44 @@
         ctx.stroke();
       });
 
-      if (scene.spotBeam.length) {
-        var beamProj = scene.spotBeam.map(function (p) { return project(p, cx, cy, scale); });
+      // landmark beams: spot, walls, flip — all-expiry levels drawn as
+      // verticals through every shell (off-mesh landmarks draw no line,
+      // only an edge-clamped label below)
+      var beamProjs = (scene.beams || []).map(function (beam) {
+        var pts = beam.points.map(function (p) { return project(p, cx, cy, scale); });
+        // defense in depth: a non-finite coordinate would make createLinearGradient
+        // throw and kill the rAF loop for the rest of the session — skip the line
+        if (beam.offMesh || !isFinite(pts[0].x) || !isFinite(pts[0].y)) return { beam: beam, pts: pts };
+        var rgb = beam.rgb;
+        var peak = beam.thick ? 0.55 : 0.4;
         ctx.beginPath();
-        beamProj.forEach(function (p, idx) { if (idx === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
-        var grad = ctx.createLinearGradient(beamProj[0].x, beamProj[0].y, beamProj[beamProj.length - 1].x, beamProj[beamProj.length - 1].y);
-        grad.addColorStop(0, 'rgba(198,143,255,0.05)');
-        grad.addColorStop(0.5, 'rgba(198,143,255,0.55)');
-        grad.addColorStop(1, 'rgba(198,143,255,0.05)');
+        pts.forEach(function (p, idx) { if (idx === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+        var grad = ctx.createLinearGradient(pts[0].x, pts[0].y, pts[pts.length - 1].x, pts[pts.length - 1].y);
+        grad.addColorStop(0, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.05)');
+        grad.addColorStop(0.5, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + peak + ')');
+        grad.addColorStop(1, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.05)');
         ctx.strokeStyle = grad;
-        ctx.lineWidth = 2.4 * DPR;
-        ctx.shadowColor = 'rgba(198,143,255,0.8)';
-        ctx.shadowBlur = 14 * DPR;
+        ctx.lineWidth = (beam.thick ? 2.4 : 1.3) * DPR;
+        ctx.shadowColor = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.8)';
+        ctx.shadowBlur = (beam.thick ? 14 : 7) * DPR;
         ctx.stroke();
         ctx.shadowBlur = 0;
-      }
+        return { beam: beam, pts: pts };
+      });
 
       byZ.forEach(function (item) {
         var n = item.n, p = item.p;
         var emph = emphasisFor(n.band);
         var baseR = (1.6 + Math.abs(n.g) * 2.6) * item.mag;
         var r = baseR * Math.max(0.35, p.f / scale * 0.9) * DPR * (0.55 + 0.45 * emph);
-        var lm = scene.landmarks;
-        var special = lm && ((lm.callWallIdx >= 0 && n.band === '0DTE' && n.si === lm.callWallIdx) ||
-                              (lm.putWallIdx >= 0 && n.band === '0DTE' && n.si === lm.putWallIdx));
         var col = colorFor(n.g, 0.9 * emph);
         ctx.beginPath();
         ctx.fillStyle = col;
         ctx.shadowColor = item.glow > 0.02 ? 'rgba(244,247,250,' + Math.min(1, item.glow).toFixed(2) + ')' : col;
-        ctx.shadowBlur = (special ? 22 : item.glow > 0.02 ? 16 : 9) * DPR * emph;
+        ctx.shadowBlur = (item.glow > 0.02 ? 16 : 9) * DPR * emph;
         ctx.arc(p.x, p.y, Math.max(0.8, r), 0, Math.PI * 2);
         ctx.fill();
         ctx.shadowBlur = 0;
-
-        if (special) {
-          var isCall = lm.callWallIdx >= 0 && n.si === lm.callWallIdx;
-          ctx.beginPath();
-          ctx.strokeStyle = isCall ? 'rgba(53,214,176,0.9)' : 'rgba(255,122,82,0.9)';
-          ctx.lineWidth = 1.4 * DPR;
-          ctx.arc(p.x, p.y, r * 2.6, 0, Math.PI * 2);
-          ctx.stroke();
-        }
 
         // synapses: the three non-primary greeks, orbiting this node at a
         // FIXED angle per greek (no spin — a rotating position can't serve as
@@ -407,65 +434,35 @@
         });
       });
 
-      var lm2 = scene.landmarks;
-      var flipNode = lm2 && lm2.flipIdx >= 0 ? scene.nodeGrid['0DTE_' + lm2.flipIdx] : null;
-      if (flipNode) {
-        var fp = project(flipNode, cx, cy, scale);
-        var pulse2 = reduceMotion ? 1 : (0.7 + 0.3 * Math.sin(time * 2.2));
-        ctx.beginPath();
-        ctx.strokeStyle = 'rgba(230,236,242,' + (0.55 * pulse2).toFixed(2) + ')';
-        ctx.lineWidth = 1.6 * DPR;
-        ctx.arc(fp.x, fp.y, 9 * DPR * pulse2 + 4 * DPR, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-
-      // on-mesh price labels: spot, call/put wall, and the active greek's
-      // flip. Collected first (not drawn immediately) so overlapping labels —
+      // on-mesh price labels, one per beam, anchored at the beam's chosen
+      // end. Collected first (not drawn immediately) so overlapping labels —
       // common when a wall and the flip sit at neighboring strikes — can be
       // pushed apart instead of rendering as unreadable stacked text.
-      if (lm2 && lm2.raw) {
-        var raw = lm2.raw;
-        var pending = [];
-        if (scene.spotBeam.length) {
-          var spotTop = project(scene.spotBeam[scene.spotBeam.length - 1], cx, cy, scale);
-          pending.push({ text: 'SPOT ' + fmtPrice(scene.spot), x: spotTop.x, y: spotTop.y - 10 * DPR, color: '#e6ecf2', dir: -1 });
-        }
-        var sameWallStrike = lm2.callWallIdx >= 0 && lm2.callWallIdx === lm2.putWallIdx;
-        var cwNode = lm2.callWallIdx >= 0 ? scene.nodeGrid['0DTE_' + lm2.callWallIdx] : null;
-        if (cwNode) {
-          var cwp = project(cwNode, cx, cy, scale);
-          var wallText = sameWallStrike ? 'CALL+PUT WALL ' + fmtPrice(raw.callWall) : 'CALL WALL ' + fmtPrice(raw.callWall);
-          pending.push({ text: wallText, x: cwp.x, y: cwp.y - 13 * DPR, color: '#35d6b0', dir: -1 });
-        }
-        if (!sameWallStrike) {
-          var pwNode = lm2.putWallIdx >= 0 ? scene.nodeGrid['0DTE_' + lm2.putWallIdx] : null;
-          if (pwNode) {
-            var pwp = project(pwNode, cx, cy, scale);
-            pending.push({ text: 'PUT WALL ' + fmtPrice(raw.putWall), x: pwp.x, y: pwp.y + 15 * DPR, color: '#ff7a52', dir: 1 });
-          }
-        }
-        if (flipNode) {
-          var flipMeta = GREEK_META[activeGreek];
-          var flipVal = flipMeta.flipField ? raw[flipMeta.flipField] : null;
-          if (flipVal != null) pending.push({ text: flipMeta.flipLabel.toUpperCase() + ' ' + fmtPrice(flipVal), x: fp.x, y: fp.y + 16 * DPR, color: '#e6ecf2', dir: 1 });
-        }
+      var pending = [];
+      beamProjs.forEach(function (bp) {
+        var beam = bp.beam, pts = bp.pts;
+        var top = beam.labelEnd === 'top';
+        var anchor = top ? pts[pts.length - 1] : pts[0];
+        var cssColor = 'rgb(' + beam.rgb[0] + ',' + beam.rgb[1] + ',' + beam.rgb[2] + ')';
+        var text = beam.label + ' ' + fmtPrice(beam.price) + (beam.offMesh ? ' (off-mesh)' : '');
+        pending.push({ text: text, x: anchor.x, y: anchor.y + (top ? -12 : 14) * DPR, color: cssColor, dir: top ? -1 : 1 });
+      });
 
-        // anti-overlap: any label whose anchor lands within ~22px of an
-        // already-placed label gets pushed further along its own direction
-        // (above labels push further up, below labels push further down)
-        // until it clears — cheap, but enough for the handful of labels here.
-        var placed = [];
-        pending.forEach(function (lbl) {
-          var y = lbl.y;
-          var guard = 0;
-          while (placed.some(function (p) { return Math.abs(p.x - lbl.x) < 90 * DPR && Math.abs(p.y - y) < 22 * DPR; }) && guard < 6) {
-            y += lbl.dir * 18 * DPR;
-            guard++;
-          }
-          placed.push({ x: lbl.x, y: y });
-          drawLabel(lbl.text, lbl.x, y, lbl.color);
-        });
-      }
+      // anti-overlap: any label whose anchor lands within ~22px of an
+      // already-placed label gets pushed further along its own direction
+      // (above labels push further up, below labels push further down)
+      // until it clears — cheap, but enough for the handful of labels here.
+      var placed = [];
+      pending.forEach(function (lbl) {
+        var y = lbl.y;
+        var guard = 0;
+        while (placed.some(function (p) { return Math.abs(p.x - lbl.x) < 90 * DPR && Math.abs(p.y - y) < 22 * DPR; }) && guard < 6) {
+          y += lbl.dir * 18 * DPR;
+          guard++;
+        }
+        placed.push({ x: lbl.x, y: y });
+        drawLabel(lbl.text, lbl.x, y, lbl.color);
+      });
     }
 
     requestAnimationFrame(frame);

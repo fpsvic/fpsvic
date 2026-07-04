@@ -3,3 +3,6 @@ dist
 .DS_Store
 *.log
 .env
+
+# brain snapshot archive (raw market data, grows daily)
+gex/data/
