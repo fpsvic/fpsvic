@@ -1475,7 +1475,28 @@
     else if (num(cw)) { addSep(); addPart('call wall ', fmtPrice(cw)); }
     else if (num(pw)) { addSep(); addPart('put wall ', fmtPrice(pw)); }
 
-    if (greekKey !== 'gamma') {
+    // Aggregate net speed (3rd-order) — the book-wide gamma TRAJECTORY, shown
+    // ALWAYS regardless of the active shape. Unlike the per-node speed mesh
+    // (whose near-expiry 0DTE case is still gated), the aggregate net is robust
+    // — the accuracy pass measured CV ~0.01 — so it's a trustworthy standing
+    // readout today. It rides with the gamma narrative because speed IS
+    // d(dealer gamma)/d(spot): positive => aggregate gamma builds on the way up
+    // (pin strengthening), negative => it bleeds (pin loosening, room to run).
+    var nspeed = lm.netSpeed;
+    if (num(nspeed)) {
+      addSep();
+      var sp = span('reg-part');
+      sp.append(document.createTextNode('as spot rises, gamma '));
+      var sb = document.createElement('b');
+      sb.textContent = nspeed >= 0 ? 'builds' : 'bleeds';
+      sb.style.color = nspeed >= 0 ? 'var(--call)' : 'var(--put)';
+      sp.append(sb, document.createTextNode(' ' + fmtGex(nspeed)));
+      el.append(sp);
+    }
+
+    // the active greek's own net trails, EXCEPT speed (its aggregate is already
+    // the dedicated segment above) and gamma (it's the lead)
+    if (greekKey !== 'gamma' && greekKey !== 'speed') {
       var m = GREEK_META[greekKey];
       var v = lm[m.netField];
       if (num(v)) { addSep(); addPart(m.netLabel + ' ', fmtGex(v), v >= 0 ? 'var(--call)' : 'var(--put)'); }

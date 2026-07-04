@@ -322,12 +322,15 @@
      top-center, always visible once a snapshot lands */
   #regime{
     position:fixed; top:60px; left:50%; transform:translateX(-50%);
-    display:none; align-items:center; gap:8px; max-width:min(760px,82vw);
+    display:none; align-items:center; justify-content:center; gap:8px;
+    flex-wrap:wrap; max-width:min(860px,88vw); row-gap:2px;
     padding:6px 15px; border-radius:20px;
     background:rgba(16,22,29,0.74); border:1px solid var(--panel-border);
     backdrop-filter:blur(6px); z-index:5;
     font-size:12.5px; letter-spacing:0.01em; color:var(--muted);
-    white-space:nowrap; overflow:hidden;
+    /* wraps to a 2nd line rather than clipping — the aggregate net-speed
+       segment (and a non-gamma greek's net) can push it past one line */
+    white-space:nowrap;
   }
   #regime.show{ display:flex; }
   #regime .reg-lead{ font-weight:700; color:var(--text); }
