@@ -53,6 +53,23 @@
   }
   #status.err{ color:var(--err); }
 
+  .top-right{ display:flex; align-items:center; gap:14px; }
+  .addwrap{ display:flex; align-items:center; gap:6px; }
+  #addSym{
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-size:12px; letter-spacing:0.04em;
+    background:var(--panel); border:1px solid var(--panel-border); color:var(--text);
+    border-radius:5px; padding:6px 9px; width:100px; text-transform:uppercase;
+  }
+  #addSym::placeholder{ color:var(--faint); text-transform:none; letter-spacing:0.06em; }
+  #addBtn{
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-size:11px; letter-spacing:0.06em;
+    background:var(--call); color:#04140f; border:none; border-radius:5px;
+    padding:6px 12px; cursor:pointer; font-weight:600;
+  }
+  #addBtn:hover{ filter:brightness(1.08); }
+
   #grid{
     display:grid;
     grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));
@@ -116,7 +133,13 @@
     <div class="brand">
       <h1><span class="mark">MACRO</span>&nbsp; GEX BRAINS — <span class="hl">watchlist</span></h1>
     </div>
-    <span id="status">warming up…</span>
+    <div class="top-right">
+      <div class="addwrap">
+        <input id="addSym" type="text" placeholder="+ ticker" spellcheck="false" autocomplete="off" aria-label="Add ticker to watchlist">
+        <button id="addBtn" title="add this ticker to the shared watchlist">Add</button>
+      </div>
+      <span id="status">warming up…</span>
+    </div>
   </header>
   <p class="sub">
     one mini-brain per ticker · gamma shape, near-term focus, all-expiry landmarks in the stats ·

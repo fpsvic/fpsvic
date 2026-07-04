@@ -776,6 +776,37 @@
   // URL to reflect the very latest camera/greek before it copies location.href
   function flushViewState() { clearTimeout(persistTimer); writeViewState(); }
 
+  // ---------------------------------------------------------------- ticker recents (datalist)
+  // The symbol box suggests recently-viewed tickers plus the scanner/macro
+  // watchlist — one keystroke instead of retyping. Recents are brain-local;
+  // the watchlist is the shared 'gex.scan.watchlist' key (read-only here). All
+  // best-effort: a storage failure just means no suggestions, never a break.
+  var RECENTS_LS_KEY = 'gex.brain.recents';
+  var symbolListEl = document.getElementById('symbolList');
+  function loadRecents() {
+    try { var a = JSON.parse(localStorage.getItem(RECENTS_LS_KEY)); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+  }
+  function pushRecent(sym) {
+    try {
+      var a = loadRecents().filter(function (s) { return s !== sym; });
+      a.unshift(sym);
+      localStorage.setItem(RECENTS_LS_KEY, JSON.stringify(a.slice(0, 10)));
+    } catch (e) { /* private mode / quota */ }
+    refreshSymbolList();
+  }
+  function refreshSymbolList() {
+    if (!symbolListEl) return;
+    var wl = [];
+    try { var a = JSON.parse(localStorage.getItem('gex.scan.watchlist')); if (Array.isArray(a)) wl = a; } catch (e) { /* ignore */ }
+    var seen = {}, opts = [];
+    loadRecents().concat(wl).forEach(function (s) {
+      s = String(s).toUpperCase().replace(/[^A-Z^_.]/g, '');
+      if (s && !seen[s]) { seen[s] = 1; opts.push(s); }
+    });
+    symbolListEl.replaceChildren();
+    opts.forEach(function (s) { var o = document.createElement('option'); o.value = s; symbolListEl.append(o); });
+  }
+
   var DEFAULT_ROTY = 0.32, DEFAULT_ROTX = -0.72;
   function resetCamera() {
     rotY = DEFAULT_ROTY; rotX = DEFAULT_ROTX; zoom = 1;
@@ -1092,6 +1123,17 @@
   var lastBuiltSymbol = ''; // last symbol whose data actually reached the screen
   var loadSeq = 0;
 
+  // first-paint skeleton: remove it once the first snapshot builds OR the first
+  // attempt errors (past that, the last mesh stays visible across polls and the
+  // banner carries any failure — the skeleton is a cold-start affordance only)
+  var loadingEl = document.getElementById('loading');
+  var firstPaintDone = false;
+  function hideLoading() {
+    if (firstPaintDone) return;
+    firstPaintDone = true;
+    if (loadingEl) loadingEl.classList.add('hidden');
+  }
+
   // After every successful poll, re-baseline the diff-glow for ALL four greeks
   // (not just the one on screen) so clicking a greek chip later diffs against
   // this poll, not against whenever that tab was last viewed.
@@ -1362,6 +1404,7 @@
       scene = built;
       cameraDirty = true;
       armPulses(scene);
+      hideLoading();
       lastPayload = json;
       refreshBaselines(json);
       document.getElementById('titleTicker').textContent = sym;
@@ -1375,9 +1418,11 @@
       pollFails = 0;
       setStatus('live · ' + sym + ' · next refresh in ' + (POLL_MS / 1000) + 's', false);
       requestRender();
-      persistView(); // normalize the URL to the current symbol/greek/focus/camera
+      persistView();     // normalize the URL to the current symbol/greek/focus/camera
+      pushRecent(sym);   // remember successfully-loaded tickers for the symbol-box suggestions
     } catch (err) {
       if (seq !== loadSeq) return;
+      hideLoading();     // first attempt is done — let the banner carry the error, drop the skeleton
       pollFails++;
       setStatus('error · ' + sym + ' · retry in ' + Math.round(nextPollDelay() / 1000) + 's', true);
       banner('Could not build the brain mesh for ' + sym + ': ' + err.message + '. Is "node gex/server.js" running?');
@@ -1539,6 +1584,7 @@
       scene = built;
       cameraDirty = true;
       armPulses(scene);
+      hideLoading(); // entering playback during cold start counts as first paint — don't strand the skeleton
       lastPayload = payload; // greek chips + tooltips work on the frozen snapshot
       refreshBaselines(payload);
       updateReadout(payload, activeGreek);
@@ -1726,6 +1772,7 @@
   }
 
   syncControlsToState();
+  refreshSymbolList();
   try { if (localStorage.getItem(LEGEND_LS_KEY) === '1') setLegendCollapsed(true); } catch (e) { /* private mode */ }
   resize();
   var initial = (params.get('symbol') || 'SPX').toUpperCase().replace(/[^A-Z^_.]/g, '') || 'SPX';

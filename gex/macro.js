@@ -339,6 +339,33 @@
   }
   loop();
 
+  // ---------------------------------------------------------------- quick-add
+  // Add a ticker to the SHARED watchlist without a trip to the scanner. This is
+  // the one write this page makes to gex.scan.watchlist (the scanner still owns
+  // removal/reordering); loadWatchlist() already sanitizes on read, so a stored
+  // default set is materialized-then-appended on the first add.
+  function saveWatchlist(list) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(list)); } catch (e) { /* private mode / quota */ }
+  }
+  function addTicker(raw) {
+    var sym = String(raw || '').toUpperCase().replace(/[^A-Z^_.]/g, '');
+    if (!/[A-Z]/.test(sym)) return; // reject empty or punctuation-only (., _, ^) — no fetchable ticker, and unremovable from this page
+    var list = loadWatchlist();
+    if (list.indexOf(sym) !== -1) {
+      if (cards[sym]) cards[sym].root.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setStatus(sym + ' already in watchlist');
+      return;
+    }
+    list.push(sym);
+    saveWatchlist(list);
+    sweep(); // increments sweepSeq (supersedes any in-flight sweep) → reconciles cards → fetches the new one
+  }
+  var addSymEl = document.getElementById('addSym');
+  var addBtnEl = document.getElementById('addBtn');
+  function doAdd() { addTicker(addSymEl.value); addSymEl.value = ''; addSymEl.focus(); }
+  addBtnEl.addEventListener('click', doAdd);
+  addSymEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') doAdd(); });
+
   // resize / browser zoom (fires resize, changes devicePixelRatio) / a
   // background tab becoming visible all change the canvas CSS box out from
   // under the last raster — re-rasterize the minis from each card's cached

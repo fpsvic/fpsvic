@@ -4,7 +4,7 @@ Produced by a 5-dimension audit (frontend bugs, financial math, render perf, tra
 44 raw findings, 34 confirmed after adversarial verification) at snapshot commit `2c74bc3`, 2026-07-03.
 This is the working backlog — prune items as they land.
 
-**Status 2026-07-04, QoL & presentation batches 1–2: landed (post-merge, on `main`, uncommitted).**
+**Status 2026-07-04, QoL & presentation batches 1–3: landed (post-merge, on `main`; 1–2 committed 301ce9a, 3 pending).**
 _Batch 1_ — View-state persistence: active greek + near-term-focus + camera angle serialize to
 `localStorage` (`gex.brain.view`) and to the URL query (`?greek/&focus/&cam`, debounced
 `replaceState`); init precedence is **URL param > localStorage > default**, camera clamped to the
@@ -22,12 +22,19 @@ the inconsistent `⏵/⏸` unicode (`setPlayIcon`, static markup, flipping aria-
 legend**: `#legendToggle` toggles `#legendBody`, persisted (`gex.brain.legendCollapsed`), restored
 on init. **SHARE button**: `flushViewState()` syncs the URL synchronously, then
 `clipboard.writeText(location.href)` with COPIED/COPY FAILED feedback.
-Both batches verified live in-browser (defaults, precedence, override, malformed-cam fallback,
-shortcuts, symbol-box guard, help-swallows-playback-keys, fade, glyph toggle, legend
-collapse/persist, URL flush) — console clean, 25 unit tests green. Adversarial reviews: batch 1
-7 raw → 2 confirmed-and-fixed; batch 2 1 raw → 0 confirmed. Remaining QoL/presentation candidates:
-loading skeleton on first paint, multi-pin compare, ticker autocomplete/recents, macro-grid inline
-quick-add, per-symbol greek memory.
+_Batch 3_ — **Ticker recents** on the brain's symbol box: a `<datalist>` (`gex.brain.recents`,
+cap 10, `pushRecent` on load success) unioned with the shared read-only `gex.scan.watchlist`.
+**First-paint skeleton** (`#loading`): 4 concentric SVG rings echoing the dome shells, shown until
+the first snapshot builds — `hideLoading()` on first successful `buildScene` (live OR playback —
+review fix for a cold-start-into-history stranding), and on the first failed attempt (banner takes
+over). **Macro quick-add** (`macro.html`/`macro.js`): a `+ ticker`/Add control writes the shared
+`gex.scan.watchlist` (macro's first write to it; scanner still owns removal) then re-sweeps; input
+sanitized and required to contain ≥1 letter (review fix — punctuation-only would write an
+unremovable NO-DATA card).
+All three batches verified live in-browser — console clean, 25 unit tests green. Adversarial reviews:
+batch 1 7 raw → 2 confirmed-and-fixed; batch 2 1 raw → 0 confirmed; batch 3 4 raw → 2
+confirmed-and-fixed. Remaining QoL/presentation candidates: multi-pin compare, per-symbol greek
+memory, richer sparkline (multi-greek overlay).
 
 **Status 2026-07-03, "trust the picture" batch:** fix-first **#1** (painter's sort), **#2**
 (expired contracts — now DST-aware NY-close settlement via `nyCloseUtc`, dropped past the

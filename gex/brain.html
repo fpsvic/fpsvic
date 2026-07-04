@@ -255,6 +255,24 @@
   }
   #banner.show{ display:block; }
 
+  /* first-paint skeleton — faint concentric shells echoing the dome geometry,
+     shown until the first snapshot builds (or the first attempt errors out) */
+  #loading{
+    position:fixed; inset:0; z-index:4; pointer-events:none;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px;
+  }
+  #loading.hidden{ display:none; }
+  #loading .lr{ fill:none; stroke:var(--faint); stroke-width:1; opacity:0.28; animation:loadpulse 1.6s ease-in-out infinite; }
+  #loading .lr2{ animation-delay:0.15s; }
+  #loading .lr3{ animation-delay:0.3s; }
+  #loading .lr4{ animation-delay:0.45s; }
+  @keyframes loadpulse{ 0%,100%{ opacity:0.12; } 50%{ opacity:0.5; } }
+  #loading .load-cap{
+    font-family:ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-size:10.5px; letter-spacing:0.16em; text-transform:uppercase; color:var(--faint);
+  }
+  @media (prefers-reduced-motion: reduce){ #loading .lr{ animation:none; opacity:0.32; } }
+
   /* regime headline — the one-line "what's the dealer positioning" read,
      top-center, always visible once a snapshot lands */
   #regime{
@@ -309,6 +327,16 @@
 
 <canvas id="stage"></canvas>
 
+<div id="loading">
+  <svg viewBox="0 0 130 130" width="130" height="130" aria-hidden="true">
+    <circle cx="65" cy="65" r="22" class="lr lr1"/>
+    <circle cx="65" cy="65" r="35" class="lr lr2"/>
+    <circle cx="65" cy="65" r="48" class="lr lr3"/>
+    <circle cx="65" cy="65" r="60" class="lr lr4"/>
+  </svg>
+  <div class="load-cap">assembling the gamma mesh&hellip;</div>
+</div>
+
 <div class="hud" id="topbar">
   <div class="brand">
     <div>
@@ -317,7 +345,8 @@
     </div>
   </div>
   <div id="controls">
-    <input type="text" id="symbol" value="SPX" spellcheck="false" aria-label="Ticker symbol">
+    <input type="text" id="symbol" value="SPX" spellcheck="false" aria-label="Ticker symbol" list="symbolList" autocomplete="off">
+    <datalist id="symbolList"></datalist>
     <button id="load">Load</button>
     <button id="histToggle" aria-pressed="false" title="scrub archived snapshots">HISTORY</button>
     <button id="shareBtn" title="copy a link to this exact view (symbol, greek, focus, camera)">SHARE</button>
