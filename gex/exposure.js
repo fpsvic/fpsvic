@@ -58,6 +58,31 @@
     return { gamma, vanna, charm, delta };
   }
 
+  /* Third-order (and vol-convexity) greeks, split out from bsGreeks so the hot
+   * 1st/2nd-order path stays lean — these are computed only by the 3rd-order
+   * feasibility probe (and an opt-in mesh, if the probe clears them). Closed-form
+   * Black-Scholes, zero dividend yield; same d1/d2 as bsGreeks:
+   *   speed  = dGamma/dSpot           (d3V/dS3)
+   *   color  = dGamma/dTimeToExpiry   (as maturity shrinks by dt, gamma moves by -color; per year)
+   *   zomma  = dGamma/dVol            (per 1.00 vol)
+   *   vomma  = dVega/dVol   (volga)   (per 1.00 vol)
+   *   ultima = dVomma/dVol            (d3V/dSigma3, per 1.00 vol)
+   *   vega   = dV/dVol                (per 1.00 vol; returned for exposure scaling) */
+  function bsGreeks3(S, K, T, sigma) {
+    const sqT = Math.sqrt(T);
+    const d1 = (Math.log(S / K) + (RISK_FREE + 0.5 * sigma * sigma) * T) / (sigma * sqT);
+    const d2 = d1 - sigma * sqT;
+    const pdf = normPdf(d1);
+    const gamma = pdf / (S * sigma * sqT);
+    const vega = S * sqT * pdf;
+    const speed = -gamma / S * (d1 / (sigma * sqT) + 1);
+    const color = -pdf / (2 * S * T * sigma * sqT) * (1 + d1 * (2 * RISK_FREE * T - d2 * sigma * sqT) / (sigma * sqT));
+    const zomma = gamma * (d1 * d2 - 1) / sigma;
+    const vomma = vega * d1 * d2 / sigma;
+    const ultima = -vega / (sigma * sigma) * (d1 * d2 * (1 - d1 * d2) + d1 * d1 + d2 * d2);
+    return { speed, color, zomma, vomma, ultima, vega };
+  }
+
   // ---------------------------------------------------------------- cboe parsing
 
   // e.g. "SPXW250702C06200000" -> root SPXW, 2025-07-02, Call, 6200
@@ -504,7 +529,7 @@
 
   const GexExposure = {
     RISK_FREE, CONTRACT_SIZE, PROFILE_POINTS, PROFILE_RANGE, MS_YEAR,
-    normPdf, bsGreeks, parseCboe, optionGreeks, dealerSign, computeMetrics, zeroCrossing,
+    normPdf, bsGreeks, bsGreeks3, parseCboe, optionGreeks, dealerSign, computeMetrics, zeroCrossing,
     buildVolMetrics, buildSnapshot, scanRowFromChain,
     DEFAULT_MESH_BANDS, computeMeshBands, computeBandLandmarks, nyCloseUtc,
   };

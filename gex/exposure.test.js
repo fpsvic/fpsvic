@@ -341,4 +341,33 @@ test('buildSnapshot shape: required fields, r2 rounding, null-safe vol block', (
   assert.equal(E.buildSnapshot(ch2, { ok: false }, {}).spot, 100.99);
 });
 
+// ---------------------------------------------------------------- third-order greeks
+
+test('bsGreeks3: speed/color/zomma/vomma/ultima match finite differences of the lower greeks', () => {
+  const S = 100, K = 105, T = 0.25, sig = 0.22;
+  const g3 = E.bsGreeks3(S, K, T, sig);
+  const gamma = (s, k, t, v) => E.bsGreeks(s, k, t, v).gamma;
+  const vega = (s, k, t, v) => E.bsGreeks3(s, k, t, v).vega;
+  const vomma = (s, k, t, v) => E.bsGreeks3(s, k, t, v).vomma;
+  const hS = S * 1e-4, hT = 1e-6, hV = 1e-5;
+  const fdSpeed = (gamma(S + hS, K, T, sig) - gamma(S - hS, K, T, sig)) / (2 * hS);   // dGamma/dSpot
+  const fdColor = (gamma(S, K, T + hT, sig) - gamma(S, K, T - hT, sig)) / (2 * hT);   // dGamma/dTimeToExpiry
+  const fdZomma = (gamma(S, K, T, sig + hV) - gamma(S, K, T, sig - hV)) / (2 * hV);   // dGamma/dVol
+  const fdVomma = (vega(S, K, T, sig + hV) - vega(S, K, T, sig - hV)) / (2 * hV);     // dVega/dVol
+  const fdUltima = (vomma(S, K, T, sig + hV) - vomma(S, K, T, sig - hV)) / (2 * hV);  // dVomma/dVol
+  const rel = (a, b) => Math.abs(a - b) / (Math.abs(b) + 1e-12);
+  assert.ok(rel(g3.speed, fdSpeed) < 1e-3, `speed ${g3.speed} !~ fd ${fdSpeed}`);
+  assert.ok(rel(g3.color, fdColor) < 1e-3, `color ${g3.color} !~ fd ${fdColor}`);
+  assert.ok(rel(g3.zomma, fdZomma) < 1e-3, `zomma ${g3.zomma} !~ fd ${fdZomma}`);
+  assert.ok(rel(g3.vomma, fdVomma) < 1e-3, `vomma ${g3.vomma} !~ fd ${fdVomma}`);
+  assert.ok(rel(g3.ultima, fdUltima) < 5e-3, `ultima ${g3.ultima} !~ fd ${fdUltima}`);
+});
+
+test('bsGreeks3: all outputs finite for a normal ATM contract', () => {
+  const g3 = E.bsGreeks3(100, 100, 0.1, 0.2);
+  for (const k of ['speed', 'color', 'zomma', 'vomma', 'ultima', 'vega']) {
+    assert.ok(isFinite(g3[k]), `${k} is finite`);
+  }
+});
+
 console.log(`\n${passed} tests passed${process.exitCode ? ' (with failures)' : ''}`);

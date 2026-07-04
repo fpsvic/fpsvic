@@ -4,6 +4,25 @@ Produced by a 5-dimension audit (frontend bugs, financial math, render perf, tra
 44 raw findings, 34 confirmed after adversarial verification) at snapshot commit `2c74bc3`, 2026-07-03.
 This is the working backlog — prune items as they land.
 
+**Status 2026-07-04, 3rd-order greeks — ACCURACY PASS done, rendering GATED OPEN (roadmap #8).** Per
+#8's mandate ("measure poll-to-poll noise vs signal before any pixel is drawn"), the analytic math and
+an offline accuracy-pass tool shipped FIRST; no 3rd-order greek is rendered yet. `bsGreeks3(S,K,T,σ)`
+in exposure.js adds closed-form speed/color/zomma/vomma/ultima (+vega), validated against central
+finite differences of the lower greeks (2 new tests, 27 total pass). `gex/thirdorder-probe.js` is a
+permanent, re-runnable gate: it fetches a live chain (`/api/chain`), and because the archive holds
+computed meshes (no raw IV) and today is a static holiday day, it measures INPUT-NOISE AMPLIFICATION
+directly — each option's IV is only pinned to within its bid-ask spread, and 3rd derivatives amplify
+that. Three tests vs the trusted 2nd-order baseline (dealer-signed, OI-weighted): uniform +1-vol-pt
+shift %Δ, per-option spread-implied-noise Monte-Carlo CV, and cross-strike roughness.
+**Verdict (SPX/SPY/NVDA, 2026-07-04):** speed RENDERABLE (CV ×0.9 — actually *more* robust than the
+trusted greeks; a spatial gamma derivative, barely IV-sensitive); ultima borderline (CV ×3.5, under
+the ×4 bar but 26–29% sensitive to a systematic 1-vol-pt shift); color TOO NOISY (CV ×4.1, 46% swing
+on SPX). **CRITICAL CAVEAT: the holiday book has NO 0DTE** (`0DTE %`=0 across the board), so the
+near-expiry worst case (T^−3/2 blowup) is untested — re-run `node gex/thirdorder-probe.js` on a real
+expiry/trading day BEFORE rendering anything, and color stays out regardless. Next step if desired:
+render `speed` as a new primary-shape option (it's the clean pass) after an expiry-day confirmation;
+`net speed` is also robust enough (CV ~0.01) for an aggregate readout.
+
 **Status 2026-07-04, multi-pin compare: landed (on `main`, pending commit).** Refactored the
 single-pin node inspection into a MULTI-PIN COMPARE system with a docked panel (the last big-ticket
 QoL item). Click nodes to pin up to 4; each gets a numbered ring on the mesh and a matching row in a
