@@ -469,15 +469,19 @@
   // strike (the ±10% window slides with spot, so indices don't survive polls),
   // until you click it again, click empty space, or the strike leaves the mesh.
   var tipEl = document.getElementById('tip');
-  var hoverKey = null, pinnedKey = null;
+  var pinPanelEl = document.getElementById('pinPanel');
+  var pinListEl = document.getElementById('pinList');
+  var pinCountEl = document.getElementById('pinCount');
+  var hoverKey = null;
+  var pins = [];        // pinned keys (band_strike), in pin order — the compare set
+  var MAX_PINS = 4;     // cap: keeps the docked panel readable and spark fetches cheap
+  var pinRows = {};     // key -> { row, idxEl, valEl, spark, capEl, gen }
+  var pinGenSeq = 0;    // monotonic token so a stale sparkline fetch can't overwrite a newer one
   var lastPtrX = -1e9, lastPtrY = -1e9; // last idle pointer position, for hover re-validation after camera/scene changes
 
   function nodeKey(node) { return node.band + '_' + node.strike; }
-
-  function tipTargetNode() {
-    var key = pinnedKey || hoverKey;
-    return key && scene ? (scene.nodeByPrice[key] || null) : null;
-  }
+  function isPinned(key) { return pins.indexOf(key) !== -1; }
+  function hoverNode() { return hoverKey && scene ? (scene.nodeByPrice[hoverKey] || null) : null; }
 
   function hitNode(clientX, clientY) {
     if (!scene) return null;
@@ -497,17 +501,21 @@
     return best;
   }
 
-  function updateTip() {
-    var node = tipTargetNode();
+  // Floating tooltip: HOVER only now — the four raw exposures for whatever node
+  // is under the cursor. Pins live in the docked compare panel instead, so the
+  // tooltip stays light (no per-hover sparkline request) and never fights the
+  // panel for the sparkline. Marks the node PINNED if it also happens to be pinned.
+  function updateHoverTip() {
+    var node = hoverNode();
     if (!node) {
       tipEl.style.display = 'none';
-      requestRender(); // clear a lingering highlight ring
+      requestRender(); // clear a lingering hover ring
       return;
     }
     tipEl.replaceChildren();
     var head = document.createElement('div');
     head.className = 'tip-head';
-    head.textContent = fmtPrice(node.strike) + ' · ' + node.band + (pinnedKey ? ' · PINNED' : '');
+    head.textContent = fmtPrice(node.strike) + ' · ' + node.band + (isPinned(hoverKey) ? ' · PINNED' : '');
     tipEl.append(head);
     GREEK_ORDER.forEach(function (k) {
       var m = GREEK_META[k];
@@ -523,47 +531,16 @@
       name.textContent = m.short + (k === activeGreek ? ' (shape)' : '');
       var val = document.createElement('span');
       var v = node.raws[k];
-      val.className = 'tip-val mono ' + (v >= 0 ? 'call' : 'put');
+      val.className = 'tip-val mono' + (isFinite(v) ? (v >= 0 ? ' call' : ' put') : '');
       val.textContent = fmtGex(v);
       row.append(dot, name, val);
       tipEl.append(row);
     });
-    // pinned nodes get a sparkline: the day's trajectory of THIS strike's
-    // active greek, extracted server-side from the archive — the "watch the
-    // level" loop. Hover-only tooltips skip it (no request spam while roaming).
-    if (pinnedKey) {
-      var spark = document.createElement('canvas');
-      spark.className = 'tip-spark';
-      // size at creation: an unsized canvas is 300x150 by default, which would
-      // balloon the tooltip on the loading/no-history/error paths (drawSpark
-      // only sizes it on the success path)
-      spark.width = 150 * DPR;
-      spark.height = 36 * DPR;
-      spark.style.width = '150px';
-      spark.style.height = '36px';
-      var cap = document.createElement('div');
-      cap.className = 'tip-spark-cap';
-      cap.textContent = 'loading day series…';
-      tipEl.append(spark, cap);
-      var seq = ++sparkSeq;
-      fetchSeries(node).then(function (series) {
-        if (seq !== sparkSeq || !document.body.contains(spark)) return; // tooltip rebuilt since
-        var pts = (series.points || []).filter(function (p) { return p.v != null; });
-        if (pts.length < 2) { cap.textContent = 'no history yet — the archive is still building'; return; }
-        cap.textContent = (series.day || 'today') + ' · ' + GREEK_META[activeGreek].short + ' · ' + pts.length + ' snapshots';
-        drawSpark(spark, series.points);
-      }).catch(function (err) {
-        if (seq !== sparkSeq || !document.body.contains(cap)) return;
-        cap.textContent = 'series unavailable: ' + err.message;
-      });
-    }
-
     tipEl.style.display = 'block';
     positionTip(node);
-    requestRender(); // draw the highlight ring
+    requestRender(); // draw the hover ring
   }
 
-  var sparkSeq = 0;
   function fetchSeries(node) {
     var sym = pb.active ? pb.symbol : currentSymbol;
     var q = 'api/brain/series?symbol=' + encodeURIComponent(sym) +
@@ -579,8 +556,8 @@
       });
   }
 
-  function drawSpark(canvas, points) {
-    var w = 150, h = 36;
+  function drawSpark(canvas, points, w, h) {
+    w = w || 150; h = h || 36;
     canvas.width = w * DPR;
     canvas.height = h * DPR;
     canvas.style.width = w + 'px';
@@ -634,12 +611,113 @@
     tipEl.style.top = y + 'px';
   }
 
-  // after a scene rebuild: drop a pin whose strike left the mesh window, and
-  // refresh the tooltip so pinned values track the live book
-  function reconcileTip() {
-    if (pinnedKey && (!scene || !scene.nodeByPrice[pinnedKey])) pinnedKey = null;
+  // ---- pins + docked compare panel ----
+  // Click a node to add/remove it from the compare set (up to MAX_PINS). Each
+  // pin gets a panel row: index badge (matches a numbered ring on the mesh),
+  // strike·band, the live active-greek value, and the day sparkline. Pins are
+  // keyed by band+STRIKE PRICE so they track the same strike as the ±10% window
+  // slides; a pin whose strike leaves the mesh is dropped on reconcile.
+  function togglePin(node) {
+    var key = nodeKey(node);
+    var i = pins.indexOf(key);
+    if (i !== -1) pins.splice(i, 1);
+    else {
+      if (pins.length >= MAX_PINS) { var gone = pins.shift(); dropPinRow(gone); } // oldest falls off
+      pins.push(key);
+    }
+    refreshPins(true);
+    updateHoverTip(); // reflect the PINNED marker if the toggled node is under the cursor
+    requestRender();
+  }
+  function dropPinRow(key) {
+    if (pinRows[key]) { pinRows[key].row.remove(); delete pinRows[key]; }
+  }
+  function clearPins() {
+    pins = [];
+    Object.keys(pinRows).forEach(dropPinRow);
+    refreshPins(false);
+    requestRender();
+  }
+
+  // Reconcile the panel with `pins` + the live scene. refetchSparks=true pulls
+  // every row's day-series again (greek changed → different series); otherwise
+  // existing rows keep their sparkline and only their live value refreshes, so a
+  // 20s poll doesn't reflash every sparkline.
+  function refreshPins(refetchSparks) {
+    if (scene) pins = pins.filter(function (key) { return scene.nodeByPrice[key]; }); // drop strikes that left the mesh
+    Object.keys(pinRows).forEach(function (key) { if (pins.indexOf(key) === -1) dropPinRow(key); });
+    pins.forEach(function (key, i) {
+      var node = scene ? scene.nodeByPrice[key] : null;
+      if (!node) return;
+      var row = pinRows[key];
+      if (!row) { row = makePinRow(key); fetchSparkInto(key); }
+      else if (refetchSparks) fetchSparkInto(key);
+      row.idxEl.textContent = String(i + 1);
+      var v = node.raws[activeGreek];
+      row.valEl.textContent = fmtGex(v);
+      row.valEl.className = 'pin-val' + (isFinite(v) ? (v >= 0 ? ' call' : ' put') : ''); // no tint on a '—' dash
+    });
+    pinCountEl.textContent = pins.length ? '(' + pins.length + ')' : '';
+    pinPanelEl.classList.toggle('on', pins.length > 0);
+  }
+
+  function makePinRow(key) {
+    var node = scene.nodeByPrice[key];
+    var row = document.createElement('div'); row.className = 'pin-row';
+    var head = document.createElement('div'); head.className = 'pin-head';
+    var idx = document.createElement('span'); idx.className = 'pin-idx';
+    var label = document.createElement('span'); label.className = 'pin-label';
+    label.textContent = fmtPrice(node.strike) + ' · ' + node.band;
+    var val = document.createElement('span'); val.className = 'pin-val';
+    var rm = document.createElement('button'); rm.className = 'pin-x'; rm.textContent = '×'; rm.title = 'unpin';
+    rm.addEventListener('click', function () {
+      var i = pins.indexOf(key);
+      if (i !== -1) { pins.splice(i, 1); dropPinRow(key); refreshPins(false); updateHoverTip(); requestRender(); }
+    });
+    head.append(idx, label, val, rm);
+    var spark = document.createElement('canvas'); spark.className = 'pin-spark';
+    spark.width = 200 * DPR; spark.height = 34 * DPR; spark.style.width = '200px'; spark.style.height = '34px';
+    var cap = document.createElement('div'); cap.className = 'pin-cap'; cap.textContent = 'loading day series…';
+    row.append(head, spark, cap);
+    pinListEl.append(row);
+    return (pinRows[key] = { row: row, idxEl: idx, valEl: val, spark: spark, capEl: cap, gen: 0 });
+  }
+
+  function fetchSparkInto(key) {
+    var entry = pinRows[key];
+    var node = scene ? scene.nodeByPrice[key] : null;
+    if (!entry || !node) return;
+    var gen = entry.gen = ++pinGenSeq;
+    var greekAtFetch = activeGreek;
+    entry.capEl.textContent = 'loading day series…';
+    fetchSeries(node).then(function (series) {
+      if (pinRows[key] !== entry || entry.gen !== gen) return; // row removed or superseded by a newer fetch
+      var pts = (series.points || []).filter(function (p) { return p.v != null; });
+      if (pts.length < 2) { entry.capEl.textContent = 'no history yet — archive still building'; return; }
+      entry.capEl.textContent = GREEK_META[greekAtFetch].short + ' · ' + pts.length + ' snapshots';
+      drawSpark(entry.spark, series.points, 200, 34);
+    }).catch(function (err) {
+      if (pinRows[key] !== entry || entry.gen !== gen) return;
+      entry.capEl.textContent = 'series unavailable: ' + err.message;
+    });
+  }
+
+  document.getElementById('pinClear').addEventListener('click', clearPins);
+
+  // after a scene rebuild/poll: drop hover/pins whose strike left the mesh
+  // window, refresh the hover tooltip, and re-sync the compare panel (values
+  // always; sparklines only when the greek changed — refetchSparks)
+  var lastSparkContext = 'live';
+  function reconcileInspect(refetchSparks) {
     if (hoverKey && (!scene || !scene.nodeByPrice[hoverKey])) hoverKey = null;
-    if (pinnedKey || hoverKey) updateTip(); else tipEl.style.display = 'none';
+    // pin sparklines are DAY-scoped (fetchSeries appends &day= in playback), so
+    // force a refetch whenever the day context changes — entering/leaving
+    // playback or switching archive day — else a row plots one day while its
+    // value shows another. Plain scrubbing within a day keeps the context.
+    var ctx = pb.active ? ('pb:' + pb.day) : 'live';
+    if (ctx !== lastSparkContext) { refetchSparks = true; lastSparkContext = ctx; }
+    refreshPins(!!refetchSparks);
+    updateHoverTip();
   }
 
   // ---------------------------------------------------------------- camera / interaction
@@ -663,7 +741,7 @@
   window.__gexInspect = function (x, y) {
     var n = scene ? hitNode(x, y) : null;
     return {
-      hoverKey: hoverKey, pinnedKey: pinnedKey,
+      hoverKey: hoverKey, pins: pins.slice(),
       nodeCount: scene ? scene.nodes.length : 0,
       hit: n ? { band: n.band, strike: n.strike, px: n.px, py: n.py } : null,
       pxRange: scene && scene.nodes.length ? [
@@ -690,10 +768,7 @@
     var node = hitNode(e.clientX, e.clientY);
     var key = node ? nodeKey(node) : null;
     canvas.style.cursor = key ? 'pointer' : '';
-    if (key !== hoverKey) {
-      hoverKey = key;
-      if (!pinnedKey) updateTip(); // a pin owns the tooltip until cleared
-    }
+    if (key !== hoverKey) { hoverKey = key; updateHoverTip(); }
   });
   canvas.addEventListener('pointerup', function (e) {
     if (!dragging) return; // release of a press that never started on the canvas
@@ -702,13 +777,7 @@
     canvas.classList.remove('dragging');
     if (wasDrag) { persistView(); return; } // the post-drag hover re-validation happens in draw()
     var node = hitNode(e.clientX, e.clientY);
-    if (node) {
-      var key = nodeKey(node);
-      pinnedKey = pinnedKey === key ? null : key;
-    } else {
-      pinnedKey = null;
-    }
-    updateTip();
+    if (node) togglePin(node); // click on empty space keeps the compare set (row × / clear removes)
   });
   canvas.addEventListener('pointercancel', function () {
     dragging = false;
@@ -719,7 +788,7 @@
     if (dragging) return;
     hoverKey = null;
     canvas.style.cursor = '';
-    if (!pinnedKey) updateTip();
+    updateHoverTip();
   });
   canvas.addEventListener('wheel', function (e) {
     e.preventDefault();
@@ -1067,17 +1136,39 @@
       ctx.stroke();
     }
 
-    // 6) inspect highlight: ring around the hovered/pinned node, and keep the
-    // DOM tooltip glued to it as the camera moves
-    var focusNode = tipTargetNode();
-    if (focusNode) {
-      var hr = Math.max(6 * DPR, focusNode.drawBase * DPR * focusNode.pk * 2.2);
+    // 6) inspect highlights: a bright numbered ring on each pinned node (the
+    // number matches its compare-panel row), a faint ring on the hovered node,
+    // and keep the floating hover tooltip glued to its node as the camera moves
+    for (var qi = 0; qi < pins.length; qi++) {
+      var pnode = scene.nodeByPrice[pins[qi]];
+      if (!pnode || !isFinite(pnode.px)) continue;
+      var prr = Math.max(6 * DPR, pnode.drawBase * DPR * pnode.pk * 2.2);
       ctx.beginPath();
-      ctx.strokeStyle = pinnedKey ? 'rgba(244,247,250,0.95)' : 'rgba(244,247,250,0.55)';
-      ctx.lineWidth = (pinnedKey ? 1.6 : 1.1) * DPR;
-      ctx.arc(focusNode.px, focusNode.py, hr, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(244,247,250,0.95)';
+      ctx.lineWidth = 1.6 * DPR;
+      ctx.arc(pnode.px, pnode.py, prr, 0, Math.PI * 2);
       ctx.stroke();
-      positionTip(focusNode);
+      var bx = pnode.px + prr * 0.72, by = pnode.py - prr * 0.72; // index badge, matches the panel row number
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(8,11,16,0.85)';
+      ctx.arc(bx, by, 6.5 * DPR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(244,247,250,0.95)';
+      ctx.font = (8.5 * DPR) + 'px ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(qi + 1), bx, by + 0.5 * DPR);
+    }
+    var hovNode = hoverNode();
+    if (hovNode) {
+      if (!isPinned(hoverKey) && isFinite(hovNode.px)) {
+        var hrr = Math.max(6 * DPR, hovNode.drawBase * DPR * hovNode.pk * 2.2);
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(244,247,250,0.55)';
+        ctx.lineWidth = 1.1 * DPR;
+        ctx.arc(hovNode.px, hovNode.py, hrr, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      positionTip(hovNode);
     }
 
     // 7) on-mesh price labels, one per beam, anchored at the beam's chosen
@@ -1110,7 +1201,7 @@
       if (hk !== hoverKey) {
         hoverKey = hk;
         canvas.style.cursor = hk ? 'pointer' : '';
-        if (!pinnedKey) updateTip();
+        updateHoverTip();
       }
     }
 
@@ -1359,7 +1450,7 @@
     updateReadout(lastPayload, activeGreek);
     updateRegime(lastPayload, activeGreek);
     updateLegend(activeGreek);
-    reconcileTip();
+    reconcileInspect(true); // greek changed → refetch each pin's day-series
     requestRender();
   }
 
@@ -1417,7 +1508,7 @@
       }
       if (sym !== lastBuiltSymbol) {
         prevValues = {};  // never diff one symbol's strikes against another's
-        pinnedKey = null; // a pin names one symbol's strike — it must not survive into another symbol's mesh
+        pins = []; Object.keys(pinRows).forEach(dropPinRow); // pins name one symbol's strikes — clear on symbol switch
         hoverKey = null;
         lastBuiltSymbol = sym;
         // restore this symbol's remembered greek on an actual symbol change —
@@ -1447,7 +1538,7 @@
       updateRegime(json, activeGreek);
       updateLegend(activeGreek);
       updateBandTags(json);
-      reconcileTip();
+      reconcileInspect(false); // live poll: refresh pin values, keep sparklines
       banner('');
       pollFails = 0;
       setStatus('live · ' + sym + ' · next refresh in ' + (POLL_MS / 1000) + 's', false);
@@ -1625,7 +1716,7 @@
       updateRegime(payload, activeGreek);
       updateLegend(activeGreek);
       updateBandTags(payload);
-      reconcileTip();
+      reconcileInspect(false); // playback step: refresh pin values against the frozen snapshot
       pbTimeEl.textContent = pbLabel(pb.list[i]);
       setStatus('PLAYBACK · ' + pb.symbol + ' · ' + pb.day + ' · ' + (i + 1) + '/' + pb.list.length);
       requestRender();

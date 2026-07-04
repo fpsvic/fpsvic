@@ -4,7 +4,21 @@ Produced by a 5-dimension audit (frontend bugs, financial math, render perf, tra
 44 raw findings, 34 confirmed after adversarial verification) at snapshot commit `2c74bc3`, 2026-07-03.
 This is the working backlog — prune items as they land.
 
-**Status 2026-07-04, QoL & presentation batches 1–4: landed (post-merge, on `main`; 1–2 = 301ce9a, 3 = ae9bfb8, 4 pending).**
+**Status 2026-07-04, multi-pin compare: landed (on `main`, pending commit).** Refactored the
+single-pin node inspection into a MULTI-PIN COMPARE system with a docked panel (the last big-ticket
+QoL item). Click nodes to pin up to 4; each gets a numbered ring on the mesh and a matching row in a
+right-docked `#pinPanel`: index badge · strike·band · live active-greek value · × · day sparkline —
+stacked for side-by-side "is this wall building faster than that one?" reads. The floating `#tip` is
+now HOVER-ONLY (four greeks, marks `· PINNED`); pins live entirely in the panel. `pins[]` + `pinRows{}`
+keyed by band+strike; cap drops the oldest; `reconcileInspect` refetches sparklines on greek switch
+AND on any day-context change (playback enter/day/exit — review fix) but not on same-day scrub/poll;
+symbol change clears pins. Review: 6 raw → 4 distinct confirmed-and-fixed (`#pinPanel` was `.hud`
+pointer-events:none so unscrollable/click-through; stale playback sparklines; unfinished finite-check
+tint; dead `.tip-spark` CSS). Verified live: pin/unpin/re-click, cap-at-4, sparkline load + greek
+refetch + no same-day-scrub refetch, row-×/clear, symbol-change clear, panel scroll — console clean,
+25 tests green. Remaining candidate: richer sparkline (multi-greek overlay in one pin row).
+
+**Status 2026-07-04, QoL & presentation batches 1–4: landed (on `main`; 1–2 = 301ce9a, 3 = ae9bfb8, 4 = 1a986a6).**
 _Batch 1_ — View-state persistence: active greek + near-term-focus + camera angle serialize to
 `localStorage` (`gex.brain.view`) and to the URL query (`?greek/&focus/&cam`, debounced
 `replaceState`); init precedence is **URL param > localStorage > default**, camera clamped to the
