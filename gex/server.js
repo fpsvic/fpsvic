@@ -25,6 +25,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -629,6 +630,49 @@ function archiveBrainSnapshot(symbol, body, now, sourceLabel) {
     .catch((err) => console.error(`[gex] archive ${symbol} failed: ${err.message}`));
 }
 
+/* Compaction: completed past days are gzipped in place (each {HHMMSSZ-tag}.json
+ * -> .json.gz), which is LOSSLESS — unlike pruning (deletion), it keeps every
+ * snapshot, just ~5-10x smaller, so it runs by default (GEX_NO_COMPACT opts out).
+ * Today's files stay raw: they're appended and read repeatedly, and gzipping mid
+ * day would race writes and add gunzip cost to every series read. The read routes
+ * (history/snapshot/series) serve the base .json name transparently whether the
+ * body is on disk as .json or .json.gz, so the client's filename contract is
+ * unchanged. */
+const COMPACT_OFF = !!process.env.GEX_NO_COMPACT;
+const SNAP_FILE_RE = /^\d{6}Z-[a-z]{1,12}\.json$/; // HHMMSSZ-<tag>.json, the archived-snapshot filename
+const gzipAsync = (buf) => new Promise((resolve, reject) => zlib.gzip(buf, (e, out) => (e ? reject(e) : resolve(out))));
+const gunzipAsync = (buf) => new Promise((resolve, reject) => zlib.gunzip(buf, (e, out) => (e ? reject(e) : resolve(out))));
+
+// read an archived body given its BASE .json path, whether it's stored raw or
+// compacted. Prefers the raw file (today's, possibly mid-append) and falls back
+// to the .gz — and if a compaction was interrupted leaving both, the raw wins.
+async function readArchivedBody(jsonPath) {
+  try { return await fs.promises.readFile(jsonPath, 'utf8'); }
+  catch (e) { if (e.code !== 'ENOENT') throw e; }
+  return (await gunzipAsync(await fs.promises.readFile(jsonPath + '.gz'))).toString('utf8');
+}
+
+// gzip every raw snapshot .json in a completed day dir, atomically, removing the
+// raw only once the .gz is safely renamed into place. Returns [filesCompacted, bytesSaved].
+async function compactDay(dayDir) {
+  let n = 0, saved = 0;
+  let files = [];
+  try { files = await fs.promises.readdir(dayDir); } catch { return [0, 0]; }
+  for (const f of files) {
+    if (!SNAP_FILE_RE.test(f)) continue; // only raw snapshot files (skip .gz, .tmp, stray)
+    const raw = path.join(dayDir, f), gz = raw + '.gz';
+    try {
+      const buf = await fs.promises.readFile(raw);
+      const out = await gzipAsync(buf);
+      await fs.promises.writeFile(gz + '.tmp', out);
+      await fs.promises.rename(gz + '.tmp', gz);   // .gz is now complete and listable
+      await fs.promises.unlink(raw);               // drop the raw only after the .gz landed
+      n++; saved += buf.length - out.length;
+    } catch { /* raced a read/write/prune — leave this file for the next pass */ }
+  }
+  return [n, saved];
+}
+
 /* Archive maintenance: report size at startup (growth is ~10 MB/day/symbol,
  * which deserves visibility), and prune day-directories older than
  * GEX_ARCHIVE_KEEP_DAYS — strictly OPT-IN, because deleting market history
@@ -639,8 +683,9 @@ const ARCHIVE_KEEP_DAYS = Number(process.env.GEX_ARCHIVE_KEEP_DAYS || 0);
 
 async function archiveMaintenance() {
   if (ARCHIVE_OFF) return;
-  let fileCount = 0, byteCount = 0, pruned = 0;
+  let fileCount = 0, byteCount = 0, pruned = 0, compacted = 0, savedBytes = 0;
   const dayNames = new Set();
+  const today = new Date(Date.now()).toISOString().slice(0, 10); // UTC, matches the archive's day naming
   const cutoff = ARCHIVE_KEEP_DAYS > 0
     ? new Date(Date.now() - ARCHIVE_KEEP_DAYS * 86400e3).toISOString().slice(0, 10)
     : null;
@@ -657,6 +702,17 @@ async function archiveMaintenance() {
           pruned++;
           continue;
         }
+        // compact completed (past) days — lossless gzip, on by default; today's
+        // files stay raw (they're still being appended and read repeatedly).
+        // `day < today` (not `!== today`): `today` is captured once at the top,
+        // so if a run straddles UTC midnight the newly-current day-dir must NOT be
+        // compacted. The still-appending day is always the current real day, which
+        // is never LESS than the frozen `today`, so `<` can never touch it; a day
+        // that just became past is simply picked up by the next maintenance run.
+        if (!COMPACT_OFF && day < today) {
+          const [n, saved] = await compactDay(dayDir);
+          compacted += n; savedBytes += saved;
+        }
         dayNames.add(day);
         try {
           const files = await fs.promises.readdir(dayDir);
@@ -667,9 +723,11 @@ async function archiveMaintenance() {
         } catch { /* raced a prune */ }
       }
     }
-    console.log('[gex] brain archive: %d snapshots, %s MB, %d day(s)%s',
+    console.log('[gex] brain archive: %d snapshots, %s MB, %d day(s)%s%s%s',
       fileCount, (byteCount / 1e6).toFixed(1), dayNames.size,
-      pruned ? ` · pruned ${pruned} day-dir(s) older than ${ARCHIVE_KEEP_DAYS}d` : (ARCHIVE_KEEP_DAYS ? '' : ' · retention: keep forever (GEX_ARCHIVE_KEEP_DAYS to prune)'));
+      compacted ? ` · compacted ${compacted} file(s), saved ${(savedBytes / 1e6).toFixed(1)} MB` : '',
+      pruned ? ` · pruned ${pruned} day-dir(s) older than ${ARCHIVE_KEEP_DAYS}d` : '',
+      pruned || ARCHIVE_KEEP_DAYS ? '' : ' · retention: keep forever (GEX_ARCHIVE_KEEP_DAYS to prune)');
   } catch { /* no archive yet */ }
 }
 
@@ -750,7 +808,13 @@ const server = http.createServer(async (req, res) => {
     const day = /^\d{4}-\d{2}-\d{2}$/.test(dayParam) && days.includes(dayParam) ? dayParam : days[days.length - 1];
     let files = [];
     try {
-      files = (await fs.promises.readdir(path.join(symDir, day))).filter((f) => /^\d{6}Z-[a-z]{1,12}\.json$/.test(f)).sort();
+      // a compacted day holds {name}.json.gz; normalize to the base .json name so
+      // the client's snapshot filenames are identical whether the day is compacted
+      files = [...new Set(
+        (await fs.promises.readdir(path.join(symDir, day)))
+          .map((f) => (f.endsWith('.json.gz') ? f.slice(0, -3) : f))
+          .filter((f) => SNAP_FILE_RE.test(f))
+      )].sort();
     } catch { /* raced a cleanup; empty is fine */ }
     // one SOURCE per timeline: the brain page archives Tradier-first bodies
     // while the macro sweep archives CBOE-first ones for the same symbol —
@@ -771,7 +835,7 @@ const server = http.createServer(async (req, res) => {
     const symbol = String(url.searchParams.get('symbol') || '').toUpperCase().replace(/[^A-Z^_.]/g, '');
     const day = String(url.searchParams.get('day') || '');
     const file = String(url.searchParams.get('file') || '');
-    if (!symbol || !/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^\d{6}Z-[a-z]{1,12}\.json$/.test(file)) {
+    if (!symbol || !/^\d{4}-\d{2}-\d{2}$/.test(day) || !SNAP_FILE_RE.test(file)) {
       res.writeHead(400, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ error: 'need ?symbol=&day=YYYY-MM-DD&file=HHMMSSZ-src.json' }));
     }
@@ -781,7 +845,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: 'bad path' }));
     }
     try {
-      const body = await fs.promises.readFile(p, 'utf8');
+      const body = await readArchivedBody(p); // raw .json or compacted .json.gz, transparently
       // archived bodies are immutable — let the browser cache them hard
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=86400, immutable' });
       return res.end(body);
@@ -824,7 +888,13 @@ const server = http.createServer(async (req, res) => {
         const day = /^\d{4}-\d{2}-\d{2}$/.test(dayParam) && days.includes(dayParam) ? dayParam : days[days.length - 1];
         if (!day) return JSON.stringify({ symbol, day: null, points: [] });
         let files = [];
-        try { files = (await fs.promises.readdir(path.join(symDir, day))).filter((f) => /^\d{6}Z-[a-z]{1,12}\.json$/.test(f)).sort(); } catch { /* raced */ }
+        try {
+          files = [...new Set(
+            (await fs.promises.readdir(path.join(symDir, day)))
+              .map((f) => (f.endsWith('.json.gz') ? f.slice(0, -3) : f)) // compacted day -> base .json name
+              .filter((f) => SNAP_FILE_RE.test(f))
+          )].sort();
+        } catch { /* raced */ }
         const byTag = {};
         for (const f of files) (byTag[f.slice(8, -5)] = byTag[f.slice(8, -5)] || []).push(f);
         const tag = Object.keys(byTag).sort((a, b) => byTag[b].length - byTag[a].length)[0] || null;
@@ -832,7 +902,7 @@ const server = http.createServer(async (req, res) => {
         const points = await Promise.all(series.map(async (f) => {
           const t = f.slice(0, 7); // HHMMSSZ
           try {
-            const snap = JSON.parse(await fs.promises.readFile(path.join(symDir, day, f), 'utf8'));
+            const snap = JSON.parse(await readArchivedBody(path.join(symDir, day, f))); // raw or compacted
             const b = (snap.bands || []).find((x) => x.name === band);
             const si = (snap.strikes || []).findIndex((s) => Math.abs(s - strike) < 1e-9);
             if (allGreeks) {

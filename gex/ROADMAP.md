@@ -4,6 +4,21 @@ Produced by a 5-dimension audit (frontend bugs, financial math, render perf, tra
 44 raw findings, 34 confirmed after adversarial verification) at snapshot commit `2c74bc3`, 2026-07-03.
 This is the working backlog — prune items as they land.
 
+**Status 2026-07-04, archive retention/compaction: landed (roadmap #2 tail / risk #1).** The archive
+grows ~10 MB/day/symbol; this adds LOSSLESS gzip COMPACTION of completed past days (each
+`{HHMMSSZ-tag}.json` → `.json.gz`). Because it never deletes history it runs BY DEFAULT (unlike the
+opt-in *pruning* of whole days, which stays gated behind `GEX_ARCHIVE_KEEP_DAYS`); `GEX_NO_COMPACT`
+opts out. Today's files stay raw (still appended + read repeatedly). The read routes
+(`history`/`snapshot`/`series`) serve the base `.json` name transparently whether the body is on disk
+as `.json` or `.json.gz` (`readArchivedBody` tries raw then `.gz`; listings normalize+dedupe), so the
+client's filename contract is unchanged. `compactDay` is atomic (gzip → write `.gz.tmp` → rename →
+unlink raw only after the `.gz` lands), and compaction only touches genuinely-immutable past days.
+Review: 2 confirmed (same root) — a run straddling UTC midnight could compact the newly-current day
+because `today` is captured once; fixed by `day < today` (strictly-before) instead of `!== today`, so
+the still-appending current day is never eligible. Verified in an ISOLATED server (temp
+`GEX_ARCHIVE_DIR`, real archive untouched): past day gzipped ~1.9× on the dense numeric JSON, today
+raw, all three routes served the compacted day correctly. Retention (deletion) remains strictly opt-in.
+
 **Status 2026-07-04, 3rd-order greeks — ACCURACY PASS done, rendering GATED OPEN (roadmap #8).** Per
 #8's mandate ("measure poll-to-poll noise vs signal before any pixel is drawn"), the analytic math and
 an offline accuracy-pass tool shipped FIRST; no 3rd-order greek is rendered yet. `bsGreeks3(S,K,T,σ)`
