@@ -48,6 +48,7 @@
 
   var statusEl = document.getElementById('status');
   var bannerEl = document.getElementById('banner');
+  var regimeEl = document.getElementById('regime');
   function setStatus(msg, isErr) {
     statusEl.textContent = msg;
     statusEl.className = isErr ? 'err' : '';
@@ -458,6 +459,7 @@
     focusToggle.setAttribute('aria-pressed', String(nearTermFocus));
     if (scene) applyDerived(scene);
     requestRender();
+    persistView();
   });
 
   // ---------------------------------------------------------------- node inspection (hover + pin)
@@ -698,7 +700,7 @@
     var wasDrag = dragDist >= 5;
     dragging = false;
     canvas.classList.remove('dragging');
-    if (wasDrag) return; // the post-drag hover re-validation happens in draw()
+    if (wasDrag) { persistView(); return; } // the post-drag hover re-validation happens in draw()
     var node = hitNode(e.clientX, e.clientY);
     if (node) {
       var key = nodeKey(node);
@@ -724,6 +726,7 @@
     zoom = Math.max(0.55, Math.min(2.2, zoom * (1 - e.deltaY * 0.001)));
     cameraDirty = true;
     requestRender();
+    persistView();
   }, { passive: false });
 
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -733,6 +736,68 @@
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden) { cameraDirty = true; requestRender(); }
   });
+
+  // ---------------------------------------------------------------- view state (URL + localStorage)
+  // The tool should remember where you left it — active greek, near-term focus,
+  // and camera angle — and produce a shareable URL that reconstructs the exact
+  // view. localStorage is the personal default; a ?greek/&focus/&cam query
+  // overrides it (so a pasted link always wins). Writes are debounced because a
+  // drag fires camera changes continuously; history.replaceState keeps it out
+  // of the back-stack. All of it is best-effort: a storage exception (private
+  // mode, quota) or a malformed query must never break the render.
+  var VIEW_LS_KEY = 'gex.brain.view';
+  function readStoredPrefs() {
+    try { return JSON.parse(localStorage.getItem(VIEW_LS_KEY)) || {}; } catch (e) { return {}; }
+  }
+  var persistTimer = null;
+  function writeViewState() {
+    var state = {
+      greek: activeGreek,
+      focus: nearTermFocus ? 1 : 0,
+      rotX: +rotX.toFixed(3), rotY: +rotY.toFixed(3), zoom: +zoom.toFixed(3),
+    };
+    try { localStorage.setItem(VIEW_LS_KEY, JSON.stringify(state)); } catch (e) { /* private mode / quota */ }
+    // reflect in the URL for shareable links — replaceState, not pushState,
+    // so orbiting the mesh doesn't flood the browser back button
+    try {
+      var qp = new URLSearchParams(location.search);
+      qp.set('symbol', currentSymbol);
+      qp.set('greek', activeGreek);
+      qp.set('focus', String(state.focus));
+      qp.set('cam', state.rotY + ',' + state.rotX + ',' + state.zoom);
+      history.replaceState(null, '', location.pathname + '?' + qp.toString());
+    } catch (e) { /* replaceState can throw on some file:// contexts */ }
+  }
+  function persistView() {
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(writeViewState, 300);
+  }
+  // flush the pending debounced write immediately — the SHARE button needs the
+  // URL to reflect the very latest camera/greek before it copies location.href
+  function flushViewState() { clearTimeout(persistTimer); writeViewState(); }
+
+  var DEFAULT_ROTY = 0.32, DEFAULT_ROTX = -0.72;
+  function resetCamera() {
+    rotY = DEFAULT_ROTY; rotX = DEFAULT_ROTX; zoom = 1;
+    cameraDirty = true;
+    requestRender();
+    persistView();
+  }
+
+  // Greek-switch fade: the mesh geometry snaps (it's recomputed for the new
+  // greek), but easing the canvas opacity up from a quick dip sells it as a
+  // transition instead of a hard cut. Pure CSS opacity on the <canvas> element,
+  // so it composites independently of the render-on-demand loop — zero extra
+  // frames are drawn. The transition:none + forced reflow makes the dip
+  // instantaneous; clearing the inline transition restores the stylesheet ease.
+  function flashSwitch() {
+    if (reduceMotion) return;
+    canvas.style.transition = 'none';
+    canvas.style.opacity = '0.35';
+    void canvas.offsetWidth;
+    canvas.style.transition = '';
+    canvas.style.opacity = '1';
+  }
 
   // ---------------------------------------------------------------- render loop (on demand)
   var needsRender = false, rafPending = false, cameraDirty = true;
@@ -1162,6 +1227,68 @@
     });
   }
 
+  // Regime headline: one plain-language line synthesizing the dealer read from
+  // the all-expiry landmarks. The LEAD is always the gamma structure (net GEX
+  // sign) — that's the market-structure fact walls/flip beams encode, and it's
+  // stable regardless of which greek is on screen — followed by spot-vs-flip
+  // and the wall range. When a non-gamma greek is the active shape, its net is
+  // appended so switching greeks changes the sentence. All values are formatted
+  // numbers (no user text), built with DOM nodes rather than innerHTML.
+  function updateRegime(payload, greekKey) {
+    var el = regimeEl;
+    if (!el) return;
+    if (!payload || !payload.landmarks) { el.classList.remove('show'); return; }
+    var lm = payload.landmarks;
+    var net = lm.netGex, spot = payload.spot, flip = lm.flip, cw = lm.callWall, pw = lm.putWall;
+    var num = function (v) { return v != null && isFinite(v); };
+    el.replaceChildren();
+    var span = function (cls, txt) {
+      var s = document.createElement('span');
+      if (cls) s.className = cls;
+      if (txt != null) s.textContent = txt;
+      return s;
+    };
+    var addSep = function () { el.append(span('reg-sep', '·')); };
+    // a reg-part whose last word is emphasized: leading plain text + a <b>
+    var addPart = function (plain, boldTxt, boldColor) {
+      var p = span('reg-part');
+      if (plain) p.append(document.createTextNode(plain));
+      if (boldTxt != null) {
+        var b = document.createElement('b');
+        b.textContent = boldTxt;
+        if (boldColor) b.style.color = boldColor;
+        p.append(b);
+      }
+      el.append(p);
+    };
+
+    var known = num(net);
+    var lead = span('reg-lead' + (known ? (net >= 0 ? ' call' : ' put') : ''),
+      known ? (net >= 0 ? 'Dealers long gamma' : 'Dealers short gamma') : 'Gamma regime forming');
+    el.append(lead);
+
+    if (known) { addSep(); addPart(net >= 0 ? 'dips bought, rips sold — ' : 'moves amplified — ', net >= 0 ? 'pinning' : 'trending'); }
+
+    if (num(flip) && num(spot)) { addSep(); addPart(spot >= flip ? 'spot above flip ' : 'spot below flip ', fmtPrice(flip)); }
+
+    if (num(cw) && num(pw)) {
+      addSep();
+      // a single strike can be both walls (thin/holiday book) — don't render "7,500–7,500"
+      if (Math.round(cw) === Math.round(pw)) addPart('wall ', fmtPrice(cw));
+      else addPart('walls ', fmtPrice(pw) + '–' + fmtPrice(cw));
+    }
+    else if (num(cw)) { addSep(); addPart('call wall ', fmtPrice(cw)); }
+    else if (num(pw)) { addSep(); addPart('put wall ', fmtPrice(pw)); }
+
+    if (greekKey !== 'gamma') {
+      var m = GREEK_META[greekKey];
+      var v = lm[m.netField];
+      if (num(v)) { addSep(); addPart(m.netLabel + ' ', fmtGex(v), v >= 0 ? 'var(--call)' : 'var(--put)'); }
+    }
+
+    el.classList.add('show');
+  }
+
   function renderActiveGreek() {
     if (!lastPayload) return;
     var built = buildScene(lastPayload, activeGreek);
@@ -1171,19 +1298,36 @@
       armPulses(scene);
     }
     updateReadout(lastPayload, activeGreek);
+    updateRegime(lastPayload, activeGreek);
     updateLegend(activeGreek);
     reconcileTip();
     requestRender();
   }
 
-  document.querySelectorAll('#greeks .chip').forEach(function (chip) {
-    chip.addEventListener('click', function () {
-      var key = chip.getAttribute('data-greek');
-      if (key === activeGreek) return;
-      activeGreek = key;
-      document.querySelectorAll('#greeks .chip').forEach(function (c) { c.classList.toggle('active', c === chip); });
-      renderActiveGreek();
+  // switch the primary greek (the shape). Shared by the chips and the 1-4/GVCD
+  // keyboard shortcuts — both route through here so chip state, render, and
+  // persistence stay in one place.
+  function switchGreek(key) {
+    if (!GREEK_META[key] || key === activeGreek) return;
+    activeGreek = key;
+    syncControlsToState();
+    renderActiveGreek();
+    flashSwitch();
+    persistView();
+  }
+
+  // reflect activeGreek / nearTermFocus in the controls — used at init (when
+  // state comes from the URL or localStorage) and on every keyboard-driven change
+  function syncControlsToState() {
+    document.querySelectorAll('#greeks .chip').forEach(function (c) {
+      c.classList.toggle('active', c.getAttribute('data-greek') === activeGreek);
     });
+    focusToggle.textContent = 'Near-term focus: ' + (nearTermFocus ? 'ON' : 'OFF');
+    focusToggle.setAttribute('aria-pressed', String(nearTermFocus));
+  }
+
+  document.querySelectorAll('#greeks .chip').forEach(function (chip) {
+    chip.addEventListener('click', function () { switchGreek(chip.getAttribute('data-greek')); });
   });
 
   var pollFails = 0; // consecutive live-load failures, drives the retry backoff
@@ -1223,6 +1367,7 @@
       document.getElementById('titleTicker').textContent = sym;
       document.getElementById('backLink').href = 'index.html?symbol=' + encodeURIComponent(sym);
       updateReadout(json, activeGreek);
+      updateRegime(json, activeGreek);
       updateLegend(activeGreek);
       updateBandTags(json);
       reconcileTip();
@@ -1230,6 +1375,7 @@
       pollFails = 0;
       setStatus('live · ' + sym + ' · next refresh in ' + (POLL_MS / 1000) + 's', false);
       requestRender();
+      persistView(); // normalize the URL to the current symbol/greek/focus/camera
     } catch (err) {
       if (seq !== loadSeq) return;
       pollFails++;
@@ -1278,6 +1424,15 @@
   var pbDaySel = document.getElementById('pbDay');
   var pbPlayBtn = document.getElementById('pbPlay');
   var PB_STEP_MS = 700;
+
+  // crisp SVG play/pause glyphs — the raw ⏵/⏸ unicode renders inconsistently
+  // across fonts/OSes. Static markup (no interpolation), so innerHTML is safe.
+  var PLAY_SVG = '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2.5 1.5 L10.5 6 L2.5 10.5 Z" fill="currentColor"/></svg>';
+  var PAUSE_SVG = '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><rect x="2.6" y="1.5" width="2.4" height="9" rx="0.4" fill="currentColor"/><rect x="7" y="1.5" width="2.4" height="9" rx="0.4" fill="currentColor"/></svg>';
+  function setPlayIcon(playing) {
+    pbPlayBtn.innerHTML = playing ? PAUSE_SVG : PLAY_SVG;
+    pbPlayBtn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  }
 
   function pbLabel(fileName) {
     var m = /^(\d{2})(\d{2})(\d{2})Z-([a-z]+)\.json$/.exec(fileName || '');
@@ -1387,6 +1542,7 @@
       lastPayload = payload; // greek chips + tooltips work on the frozen snapshot
       refreshBaselines(payload);
       updateReadout(payload, activeGreek);
+      updateRegime(payload, activeGreek);
       updateLegend(activeGreek);
       updateBandTags(payload);
       reconcileTip();
@@ -1404,7 +1560,7 @@
   function stopPlay() {
     pb.playing = false;
     clearInterval(pb.timer);
-    pbPlayBtn.textContent = '⏵';
+    setPlayIcon(false);
   }
 
   pbPlayBtn.addEventListener('click', function () {
@@ -1414,7 +1570,7 @@
     // first tick can't see the old at-the-end index and stop immediately
     if (pb.idx >= pb.list.length - 1) pb.idx = -1;
     pb.playing = true;
-    pbPlayBtn.textContent = '⏸';
+    setPlayIcon(true);
     pb.timer = setInterval(function () {
       if (!pb.active || pb.idx >= pb.list.length - 1) { stopPlay(); return; }
       showSnapshot(pb.idx + 1);
@@ -1456,15 +1612,124 @@
 
   document.addEventListener('keydown', function (e) {
     if (!pb.active) return;
-    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
+    if (helpVisible()) return; // the help modal owns the keyboard — don't scrub/play behind it
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'BUTTON') return;
     if (e.key === 'ArrowLeft') { stopPlay(); showSnapshot(pb.idx - 1); e.preventDefault(); }
     else if (e.key === 'ArrowRight') { stopPlay(); showSnapshot(pb.idx + 1); e.preventDefault(); }
+    else if (e.key === ' ') { pbPlayBtn.click(); e.preventDefault(); }
   });
 
-  // initial canvas setup + seed from ?symbol=
-  resize();
+  // ---------------------------------------------------------------- keyboard shortcuts + help overlay
+  // Everything reachable without leaving the mesh: greek switching, focus,
+  // history, camera reset. The '?' panel documents them and auto-opens once on
+  // a first visit (localStorage flag) for discoverability. Shortcuts never fire
+  // while typing in the symbol box, while a modifier is held (don't clobber
+  // browser chords), or while the help panel itself is open.
+  var helpEl = document.getElementById('help');
+  var HELP_SEEN_KEY = 'gex.brain.helpSeen';
+  function helpVisible() { return helpEl.classList.contains('show'); }
+  function openHelp() { helpEl.classList.add('show'); }
+  function closeHelp() {
+    helpEl.classList.remove('show');
+    try { localStorage.setItem(HELP_SEEN_KEY, '1'); } catch (e) { /* private mode */ }
+  }
+  helpEl.addEventListener('click', function (e) { if (e.target === helpEl) closeHelp(); }); // backdrop click only
+
+  var GREEK_KEYS = { '1': 'gamma', '2': 'vanna', '3': 'charm', '4': 'delta', g: 'gamma', v: 'vanna', c: 'charm', d: 'delta' };
+  document.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if (e.key === '?') { helpVisible() ? closeHelp() : openHelp(); e.preventDefault(); return; }
+    if (e.key === 'Escape') { if (helpVisible()) { closeHelp(); e.preventDefault(); } return; }
+    if (helpVisible()) return; // panel open: swallow the rest until it's dismissed
+    var k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (GREEK_KEYS[k]) { switchGreek(GREEK_KEYS[k]); e.preventDefault(); }
+    else if (k === 'f') { focusToggle.click(); e.preventDefault(); }
+    else if (k === 'h') { histToggle.click(); e.preventDefault(); }
+    else if (k === 'r') { resetCamera(); e.preventDefault(); }
+  });
+
+  // ---------------------------------------------------------------- legend collapse + share link
+  var legendEl = document.getElementById('legend');
+  var legendToggle = document.getElementById('legendToggle');
+  var LEGEND_LS_KEY = 'gex.brain.legendCollapsed';
+  function setLegendCollapsed(collapsed) {
+    legendEl.classList.toggle('collapsed', collapsed);
+    legendToggle.setAttribute('aria-expanded', String(!collapsed));
+    try { localStorage.setItem(LEGEND_LS_KEY, collapsed ? '1' : '0'); } catch (e) { /* private mode */ }
+  }
+  legendToggle.addEventListener('click', function () {
+    setLegendCollapsed(!legendEl.classList.contains('collapsed'));
+  });
+
+  // SHARE: copy a link to the exact current view. The URL is already the source
+  // of truth (writeViewState keeps it current); flush any pending debounce first
+  // so a just-moved camera is captured. Clipboard write is user-initiated and
+  // local — best-effort with visible success/failure feedback on the button.
+  var shareBtn = document.getElementById('shareBtn');
+  var shareResetTimer = null;
+  function shareFeedback(label, ok) {
+    shareBtn.textContent = label;
+    shareBtn.classList.toggle('copied', ok);
+    clearTimeout(shareResetTimer);
+    shareResetTimer = setTimeout(function () { shareBtn.textContent = 'SHARE'; shareBtn.classList.remove('copied'); }, 1400);
+  }
+  shareBtn.addEventListener('click', function () {
+    flushViewState();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(location.href).then(
+        function () { shareFeedback('COPIED', true); },
+        function () { shareFeedback('COPY FAILED', false); }
+      );
+    } else {
+      shareFeedback('COPY FAILED', false);
+    }
+  });
+
+  // ---------------------------------------------------------------- init
+  // Hydrate the view state before the first render: a ?greek/&focus/&cam query
+  // (a shared link) wins over the personal localStorage default, which wins over
+  // the hardcoded defaults. Camera values are clamped to the same bounds the
+  // interactive handlers enforce, so a hand-edited or stale URL can't wedge the
+  // view off-screen.
   var params = new URLSearchParams(location.search);
+  var stored = readStoredPrefs();
+  var finiteNum = function (v) { return typeof v === 'number' && isFinite(v); };
+
+  var gp = String(params.get('greek') || stored.greek || 'gamma').toLowerCase();
+  if (GREEK_META[gp]) activeGreek = gp;
+
+  var fp = params.get('focus');
+  if (fp == null) fp = stored.focus;
+  if (fp === 0 || fp === '0' || fp === false || fp === 'false') nearTermFocus = false;
+  else if (fp === 1 || fp === '1' || fp === true || fp === 'true') nearTermFocus = true;
+  // otherwise keep the default (ON)
+
+  var camStr = params.get('cam'), cam = null;
+  if (camStr) {
+    var parts = camStr.split(',').map(Number);
+    if (parts.length === 3 && parts.every(function (n) { return isFinite(n); })) cam = parts;
+  }
+  // a MALFORMED ?cam= (present but unparseable) must still fall through to the
+  // saved personal camera rather than clobber it with the hardcoded default —
+  // separate `if`, not `else if`, so the localStorage tier is reachable
+  if (!cam && finiteNum(stored.rotY) && finiteNum(stored.rotX) && finiteNum(stored.zoom)) {
+    cam = [stored.rotY, stored.rotX, stored.zoom];
+  }
+  if (cam) {
+    rotY = cam[0];
+    rotX = Math.max(-1.1, Math.min(1.1, cam[1]));
+    zoom = Math.max(0.55, Math.min(2.2, cam[2]));
+  }
+
+  syncControlsToState();
+  try { if (localStorage.getItem(LEGEND_LS_KEY) === '1') setLegendCollapsed(true); } catch (e) { /* private mode */ }
+  resize();
   var initial = (params.get('symbol') || 'SPX').toUpperCase().replace(/[^A-Z^_.]/g, '') || 'SPX';
   document.getElementById('symbol').value = initial;
+  try { if (!localStorage.getItem(HELP_SEEN_KEY)) openHelp(); } catch (e) { /* private mode: just skip the intro */ }
   load(initial).then(scheduleNext);
 })();
