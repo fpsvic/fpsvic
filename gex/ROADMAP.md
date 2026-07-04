@@ -12,8 +12,17 @@ done with it), **#7** (off-mesh landmarks labeled instead of snapped), and **#8*
 drawn as cross-shell beams, "(all expiries)" in the legend) are **landed**, plus the charm
 hedge-direction copy from #16. The **snapshot archiver** (roadmap #2's write side) ships with
 the same batch: every fresh brain build lands in `gex/data/brain/` (gitignored;
-`GEX_NO_ARCHIVE=1` to disable). Still open from fix-first: #4/#11 (render pipeline), #6
+`GEX_NO_ARCHIVE=1` to disable). Still open from fix-first: #6
 (node tooltip), #9 (synapse sign legibility), #10 (strike ticks), #12–15, rest of #16.
+
+**Status 2026-07-03, render pipeline (roadmap #1 / fix-first #4 + #11): landed.** brain.js
+render core rewritten: render-on-demand (idle = zero frames — the rAF loop stops entirely;
+verified live: 1 frame per poll/greek-switch/toggle, frames only while dragging), glow
+sprites via drawImage replace all per-draw `shadowBlur` (survives only on the ≤4 landmark
+beams), edge strokes batched into color buckets, projections written into node fields and
+reused (depth sort + reproject only on camera change), pulse decay moved to absolute time
+so irregular frames can't stretch it, DPR re-read on resize. The macro/watchlist view's
+client-side cost gate is now clear.
 
 ## 1. STATE
 

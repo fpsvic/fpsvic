@@ -7,11 +7,27 @@
  *
  * Data comes from GET /api/brain?symbol=SYM (server.js, backed by
  * GexExposure.computeMeshBands) on a polling interval — the underlying app has
- * no snapshot history yet, so "recently changed" nodes get a transient pulse
+ * no snapshot playback yet, so "recently changed" nodes get a transient pulse
  * (diffed against the previous poll) as a live-only stand-in for real history.
  *
  * Rendering is plain Canvas 2D with a hand-rolled rotation/perspective
- * projection — no WebGL library needed for a few hundred nodes. */
+ * projection — no WebGL library. The pipeline is built to sit open all day
+ * next to an execution platform without pinning a core:
+ *
+ *   - RENDER ON DEMAND. Nothing redraws unless something changed: a drag/zoom,
+ *     a new snapshot, a greek switch, the focus toggle, or an active pulse
+ *     animation. Idle cost is zero — no requestAnimationFrame loop runs.
+ *   - SPRITES, NOT SHADOWS. Node/satellite glows are pre-rendered radial-
+ *     gradient sprites drawn with drawImage. canvas shadowBlur is ruinously
+ *     expensive per call (~2,500 shadowed draws/frame before); it survives
+ *     only on the ≤4 landmark beams.
+ *   - BATCHED EDGES. Edge strokes are grouped into a handful of color buckets
+ *     (one beginPath/stroke per bucket instead of ~2,500 individual strokes).
+ *     Bucketing gives up per-segment z-order BETWEEN edges, which is invisible
+ *     at their alpha; nodes still draw over edges in proper depth order.
+ *   - PROJECTION REUSE. Camera-dependent math (project + depth sort) runs only
+ *     when the camera or scene actually changed; edges/satellites reuse the
+ *     node projections instead of re-projecting endpoints. */
 
 (function () {
   var canvas = document.getElementById('stage');
@@ -19,13 +35,16 @@
   var DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
 
   function resize() {
+    // re-read DPR: the window may have moved to a different-density monitor
+    DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
     canvas.width = Math.floor(window.innerWidth * DPR);
     canvas.height = Math.floor(window.innerHeight * DPR);
     canvas.style.width = window.innerWidth + 'px';
     canvas.style.height = window.innerHeight + 'px';
+    cameraDirty = true;
+    requestRender();
   }
   window.addEventListener('resize', resize);
-  resize();
 
   var statusEl = document.getElementById('status');
   var bannerEl = document.getElementById('banner');
@@ -87,15 +106,73 @@
   var activeGreek = 'gamma';
   var SATELLITE_THRESHOLD = 0.08; // |normalized value| below this doesn't draw a synapse (keeps quiet strikes clean)
 
-  function noise(i, seed) {
-    var v = Math.sin(i * 12.9898 + seed * 78.233) * 43758.5453;
-    return v - Math.floor(v);
-  }
+  var CALL_RGB = [53, 214, 176], PUT_RGB = [255, 122, 82];
 
-  // Mutable scene state, rebuilt whenever a new snapshot lands OR the active greek changes.
-  var scene = { nodes: [], ringEdges: [], radialEdges: [], nodeGrid: {}, beams: [], strikes: [] };
+  // ---------------------------------------------------------------- glow sprites
+  // A sprite is a small offscreen canvas holding a pre-rendered glow dot (or
+  // hollow ring): solid core, radial falloff to transparent at 4x the core
+  // radius. Drawing one is a single drawImage — the whole point is never to
+  // touch ctx.shadowBlur in the per-node hot path. Alpha is quantized to ten
+  // buckets so the cache stays tiny (a few dozen sprites, built lazily).
+  var SPRITE = 64, CORE = 8, RING = 20; // sprite px, filled core radius, hollow ring radius
+  var spriteCache = new Map();
+  function spriteFor(rgb, alpha, hollow) {
+    var bucket = Math.max(1, Math.min(10, Math.round(alpha * 10)));
+    var key = rgb[0] + ',' + rgb[1] + ',' + rgb[2] + (hollow ? 'h' : 'f') + bucket;
+    var s = spriteCache.get(key);
+    if (s) return s;
+    var a = bucket / 10;
+    var c = document.createElement('canvas');
+    c.width = SPRITE; c.height = SPRITE;
+    var g = c.getContext('2d');
+    var mid = SPRITE / 2;
+    if (hollow) {
+      // soft halo + a crisp ring with a genuinely transparent center
+      var halo = g.createRadialGradient(mid, mid, RING * 0.5, mid, mid, mid);
+      halo.addColorStop(0, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0)');
+      halo.addColorStop(0.45, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + (a * 0.28).toFixed(3) + ')');
+      halo.addColorStop(1, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0)');
+      g.fillStyle = halo;
+      g.fillRect(0, 0, SPRITE, SPRITE);
+      g.beginPath();
+      g.strokeStyle = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + a.toFixed(3) + ')';
+      g.lineWidth = 12; // thick in sprite space: scaled draws must keep the ring above a device pixel
+      g.arc(mid, mid, RING, 0, Math.PI * 2);
+      g.stroke();
+    } else {
+      var grad = g.createRadialGradient(mid, mid, 0, mid, mid, mid);
+      grad.addColorStop(0, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + a.toFixed(3) + ')');
+      grad.addColorStop(CORE / mid, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + a.toFixed(3) + ')');
+      grad.addColorStop(0.55, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + (a * 0.22).toFixed(3) + ')');
+      grad.addColorStop(1, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, SPRITE, SPRITE);
+    }
+    spriteCache.set(key, s = c);
+    return s;
+  }
+  var PULSE_SPRITE = null; // white flash overlay for recently-changed nodes
+  function pulseSprite() {
+    if (PULSE_SPRITE) return PULSE_SPRITE;
+    return (PULSE_SPRITE = spriteFor([244, 247, 250], 1, false));
+  }
+  // filled sprites: core radius CORE maps to node radius r -> draw width r/CORE*SPRITE
+  var FILL_DRAW = SPRITE / CORE;   // 8x the node radius
+  var RING_DRAW = SPRITE / RING;   // 3.2x the dot radius
+
+  // ---------------------------------------------------------------- scene
+  // Mutable scene state, rebuilt whenever a new snapshot lands OR the active
+  // greek changes. applyDerived() re-annotates it (cheap) whenever the
+  // near-term-focus toggle flips — emphasis never forces a full rebuild.
+  var scene = null;
   var lastPayload = null;
-  var prevValues = {}; // greekKey -> Map("band_strike" -> normalized value), for the diff-glow, kept per-greek so switching tabs never fakes a pulse
+  // greekKey -> Map("band_strike" -> RAW value) — the diff-glow baseline.
+  // Raw (not normalized) so a spike at one strike shifting the global max
+  // can't fake "changes" mesh-wide; reset whenever the symbol changes so two
+  // symbols with overlapping strike grids never diff against each other; and
+  // refreshed for ALL four greeks on every poll (refreshBaselines) so a greek
+  // switch hours later doesn't diff against an ancient baseline.
+  var prevValues = {};
 
   function buildScene(payload, greekKey) {
     var strikes = payload.strikes;
@@ -121,34 +198,55 @@
     var prevForGreek = prevValues[greekKey] || new Map();
     var nodes = [];
     var nodeGrid = {};
-    var changed = new Map(); // "band_strike" -> |delta| normalized, for pulse seeding
     var nextValues = new Map();
+    var maxPulse = 0;
 
     bands.forEach(function (band) {
       var meta = BAND_META[band.name] || { radius: 200, phi: 0, tilt: 0 };
       band[arrKey].forEach(function (raw, si) {
         var g = raw / maxAbs; // normalize to roughly [-1, 1] across the whole mesh, for THIS greek
         var key = band.name + '_' + strikes[si];
-        var prior = prevForGreek.has(key) ? prevForGreek.get(key) : g;
-        var delta = Math.abs(g - prior);
-        if (delta > 0.03) changed.set(key, Math.min(1, delta * 4));
-        nextValues.set(key, g);
+        // diff RAW values against the baseline, scaled by the CURRENT max —
+        // only this strike's own exposure moving can fire its pulse
+        var prior = prevForGreek.has(key) ? prevForGreek.get(key) : raw;
+        var diff = Math.abs(raw - prior) / maxAbs;
+        var pulseAmt = diff > 0.03 ? Math.min(1, diff * 4) : 0;
+        if (pulseAmt > maxPulse) maxPulse = pulseAmt;
+        nextValues.set(key, raw);
 
         var theta = (si / Math.max(1, strikes.length - 1) - 0.5) * THETA_SPAN;
         var bump = g * BUMP_SCALE;
         var r = meta.radius + bump;
-        var x = r * Math.cos(meta.phi) * Math.sin(theta);
-        var y = r * Math.sin(meta.phi) - meta.tilt;
-        var z = r * Math.cos(meta.phi) * Math.cos(theta);
         var satellites = secondaryKeys.map(function (k) {
-          return { key: k, norm: band[GREEK_META[k].key][si] / secMaxAbs[k], angle: GREEK_META[k].angle * Math.PI / 180 };
+          var gm = GREEK_META[k];
+          var norm = band[gm.key][si] / secMaxAbs[k];
+          var mag = Math.min(1, Math.abs(norm));
+          var ang = gm.angle * Math.PI / 180;
+          return {
+            key: k, norm: norm, mag: mag,
+            show: Math.abs(norm) >= SATELLITE_THRESHOLD,
+            cosA: Math.cos(ang), sinA: Math.sin(ang),
+            baseOrbit: 4 + mag * 11,
+            baseDot: 1.1 + mag * 1.1,
+            hollow: norm < 0,
+            rgb: gm.dotColor,
+            // filled per applyDerived(): sprite, spokeColor
+            sprite: null, spokeColor: '',
+            sx: 0, sy: 0, // per-frame scratch (spoke pass caches for the dot pass)
+          };
         });
         var node = {
-          x: x, y: y, z: z, band: band.name, si: si, strike: strikes[si], g: g, raw: raw,
-          phase: noise(si, band.name.length * 3 + 1) * Math.PI * 2,
-          pulse: changed.has(key) ? changed.get(key) : 0,
-          pulseT: 0,
+          x: r * Math.cos(meta.phi) * Math.sin(theta),
+          y: r * Math.sin(meta.phi) - meta.tilt,
+          z: r * Math.cos(meta.phi) * Math.cos(theta),
+          band: band.name, si: si, strike: strikes[si], g: g, raw: raw,
+          gMag: Math.min(1, Math.abs(g)),
+          pulseAmt: pulseAmt,
           satellites: satellites,
+          // filled per applyDerived(): emph, drawBase, sprite
+          emph: 1, drawBase: 0, sprite: null,
+          // per-camera-pass scratch: projected position + perspective factor
+          px: 0, py: 0, pz: 0, pk: 1,
         };
         nodes.push(node);
         nodeGrid[band.name + '_' + si] = node;
@@ -193,7 +291,7 @@
       var theta = (idx / Math.max(1, strikes.length - 1) - 0.5) * THETA_SPAN;
       var pts = [];
       for (var rr = 60; rr <= 300; rr += 6) {
-        pts.push({ x: rr * Math.sin(theta), y: -9, z: rr * Math.cos(theta) });
+        pts.push({ x: rr * Math.sin(theta), y: -9, z: rr * Math.cos(theta), px: 0, py: 0 });
       }
       return pts;
     }
@@ -206,6 +304,8 @@
       var clamped = offMesh ? (price < strikes[0] ? 0 : strikes.length - 1) : idx;
       beams.push({
         label: label, price: price, rgb: rgb,
+        labelText: label + ' ' + fmtPrice(price) + (offMesh ? ' (off-mesh)' : ''),
+        labelColor: 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')',
         offMesh: offMesh,
         points: beamPoints(clamped),
         thick: !!(opts && opts.thick),
@@ -224,8 +324,79 @@
     }
     if (meta.flipLabel) addBeam(meta.flipLabel.toUpperCase(), flipPrice, [230, 236, 242], { labelEnd: 'bottom' });
 
-    return { nodes: nodes, ringEdges: ringEdges, radialEdges: radialEdges, nodeGrid: nodeGrid, beams: beams, strikes: strikes, spot: payload.spot };
+    var built = {
+      nodes: nodes, ringEdges: ringEdges, radialEdges: radialEdges, nodeGrid: nodeGrid,
+      beams: beams, strikes: strikes, spot: payload.spot,
+      sorted: nodes.slice(),      // depth order, re-sorted on camera change
+      edgeBuckets: [],            // filled by applyDerived
+      maxPulse: maxPulse,
+      pulseT0: performance.now(), // pulse decay is absolute-time based: frames may be irregular under render-on-demand
+    };
+    applyDerived(built);
+    return built;
   }
+
+  // ---------------------------------------------------------------- near-term focus
+  // Short-term trading cares about 0DTE/Weekly gamma; Monthly/LEAP ride along
+  // for context but visually recede by default (dimmer, smaller) rather than
+  // competing for attention.
+  var NEAR_TERM_EMPHASIS = { '0DTE': 1, 'Weekly': 1, 'Monthly': 0.45, 'LEAP': 0.28 };
+  var FULL_EMPHASIS = { '0DTE': 1, 'Weekly': 1, 'Monthly': 1, 'LEAP': 1 };
+  var nearTermFocus = true;
+  function emphasisFor(bandName) { return (nearTermFocus ? NEAR_TERM_EMPHASIS : FULL_EMPHASIS)[bandName] || 1; }
+
+  /* Annotate the scene with everything that depends on the emphasis mode:
+   * node sprites/sizes, satellite sprites/spoke colors, and the batched edge
+   * buckets. Runs at build time and again on each focus toggle — a linear pass
+   * over the scene, no geometry or network work. */
+  function applyDerived(sc) {
+    sc.nodes.forEach(function (n) {
+      var emph = emphasisFor(n.band);
+      n.emph = emph;
+      n.drawBase = (1.6 + n.gMag * 2.6) * (0.55 + 0.45 * emph);
+      var alpha = 0.9 * emph * (0.35 + 0.65 * n.gMag);
+      n.sprite = spriteFor(n.g >= 0 ? CALL_RGB : PUT_RGB, alpha, false);
+      n.satellites.forEach(function (sat) {
+        if (!sat.show) return;
+        sat.sprite = spriteFor(sat.rgb, (0.55 + 0.4 * sat.mag) * emph, sat.hollow);
+        sat.spokeColor = 'rgba(' + sat.rgb[0] + ',' + sat.rgb[1] + ',' + sat.rgb[2] + ',' + (0.22 * emph).toFixed(3) + ')';
+      });
+    });
+
+    // edge color buckets: quantize (hue, alpha) so ~2,500 strokes collapse
+    // into a couple dozen batched paths
+    var buckets = new Map();
+    function bucketAdd(color, width, a, b) {
+      var key = color + '|' + width;
+      var entry = buckets.get(key);
+      if (!entry) buckets.set(key, entry = { color: color, width: width, pairs: [] });
+      entry.pairs.push(a, b);
+    }
+    sc.ringEdges.forEach(function (e) {
+      var g = (e[0].g + e[1].g) / 2;
+      var emph = emphasisFor(e[0].band);
+      var alpha = 0.28 * emph * (0.35 + 0.65 * Math.min(1, Math.abs(g)));
+      var rgb = g >= 0 ? CALL_RGB : PUT_RGB;
+      var q = (Math.round(alpha * 40) / 40).toFixed(3);
+      bucketAdd('rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + q + ')', 0.9, e[0], e[1]);
+    });
+    sc.radialEdges.forEach(function (e) {
+      var emph = (emphasisFor(e[0].band) + emphasisFor(e[1].band)) / 2;
+      var q = (Math.round(0.16 * emph * 40) / 40).toFixed(3);
+      bucketAdd('rgba(90,110,128,' + q + ')', 0.6, e[0], e[1]);
+    });
+    sc.edgeBuckets = [];
+    buckets.forEach(function (b) { sc.edgeBuckets.push(b); });
+  }
+
+  var focusToggle = document.getElementById('focusToggle');
+  focusToggle.addEventListener('click', function () {
+    nearTermFocus = !nearTermFocus;
+    focusToggle.textContent = 'Near-term focus: ' + (nearTermFocus ? 'ON' : 'OFF');
+    focusToggle.setAttribute('aria-pressed', String(nearTermFocus));
+    if (scene) applyDerived(scene);
+    requestRender();
+  });
 
   // ---------------------------------------------------------------- camera / interaction
   // Static by default (trading tool, not a screensaver) — a steeper top-down
@@ -233,7 +404,6 @@
   // clearly at a glance instead of edge-on. Rotation only ever happens from an
   // explicit drag; it never auto-resumes.
   var rotY = 0.32, rotX = -0.72;
-  var autoRotate = false;
   var dragging = false, lastX = 0, lastY = 0, zoom = 1;
 
   canvas.addEventListener('pointerdown', function (e) {
@@ -248,6 +418,8 @@
     lastX = e.clientX; lastY = e.clientY;
     rotY += dx * 0.006;
     rotX = Math.max(-1.1, Math.min(1.1, rotX + dy * 0.006));
+    cameraDirty = true;
+    requestRender();
   });
   function endDrag() { dragging = false; canvas.classList.remove('dragging'); }
   canvas.addEventListener('pointerup', endDrag);
@@ -255,45 +427,214 @@
   canvas.addEventListener('wheel', function (e) {
     e.preventDefault();
     zoom = Math.max(0.55, Math.min(2.2, zoom * (1 - e.deltaY * 0.001)));
+    cameraDirty = true;
+    requestRender();
   }, { passive: false });
-
-  // ---------------------------------------------------------------- near-term focus
-  // Short-term trading cares about 0DTE/Weekly gamma; Monthly/LEAP ride along
-  // for context but visually recede by default (dimmer, smaller) rather than
-  // competing for attention. Applied at render time (not baked into the scene)
-  // so the toggle below is instant with no rebuild.
-  var NEAR_TERM_EMPHASIS = { '0DTE': 1, 'Weekly': 1, 'Monthly': 0.45, 'LEAP': 0.28 };
-  var FULL_EMPHASIS = { '0DTE': 1, 'Weekly': 1, 'Monthly': 1, 'LEAP': 1 };
-  var nearTermFocus = true;
-  function emphasisFor(bandName) { return (nearTermFocus ? NEAR_TERM_EMPHASIS : FULL_EMPHASIS)[bandName] || 1; }
-
-  var focusToggle = document.getElementById('focusToggle');
-  focusToggle.addEventListener('click', function () {
-    nearTermFocus = !nearTermFocus;
-    focusToggle.textContent = 'Near-term focus: ' + (nearTermFocus ? 'ON' : 'OFF');
-    focusToggle.setAttribute('aria-pressed', String(nearTermFocus));
-  });
 
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  function project(p, cx, cy, scale) {
-    var cosY = Math.cos(rotY), sinY = Math.sin(rotY);
-    var x1 = p.x * cosY - p.z * sinY;
-    var z1 = p.x * sinY + p.z * cosY;
-    var cosX = Math.cos(rotX), sinX = Math.sin(rotX);
-    var y2 = p.y * cosX - z1 * sinX;
-    var z2 = p.y * sinX + z1 * cosX;
-    var focal = 620;
-    var f = focal / (focal + z2) * scale;
-    return { x: cx + x1 * f, y: cy - y2 * f, f: f, z: z2 };
+  // ---------------------------------------------------------------- render loop (on demand)
+  var needsRender = false, rafPending = false, cameraDirty = true;
+  var animUntil = 0; // absolute time (performance.now ms) until which pulse animation keeps frames flowing
+
+  function requestRender() {
+    needsRender = true;
+    if (!rafPending) {
+      rafPending = true;
+      requestAnimationFrame(frame);
+    }
   }
 
-  function colorFor(g, alpha) {
-    var t = Math.max(-1, Math.min(1, g));
-    var call = [53, 214, 176], put = [255, 122, 82];
-    var c = t >= 0 ? call : put;
-    var mag = Math.min(1, Math.abs(t));
-    return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + (alpha * (0.35 + 0.65 * mag)).toFixed(3) + ')';
+  // seed the pulse-decay animation window after a scene rebuild — always
+  // resetting first, because the previous scene's window died with it
+  function armPulses(sc) {
+    animUntil = 0;
+    if (reduceMotion || !sc || sc.maxPulse <= 0) return;
+    animUntil = sc.pulseT0 + Math.min(2500, (sc.maxPulse / 0.7) * 1000);
+  }
+
+  function frame(now) {
+    rafPending = false;
+    var animating = now < animUntil;
+    if (!animating && animUntil !== 0) {
+      // the pulse window just closed: repaint once with decay clamped to zero.
+      // rAF is suspended for hidden/occluded windows — without this settle
+      // frame, a window restored after the deadline would stay frozen showing
+      // mid-pulse flashes until the next poll.
+      animUntil = 0;
+      needsRender = true;
+    }
+    if (!needsRender && !animating) return; // idle: the loop simply stops
+    needsRender = false;
+    draw(now);
+    if (animating || needsRender) {
+      rafPending = true;
+      requestAnimationFrame(frame);
+    }
+  }
+
+  // rotate + perspective-project a scene point into screen coords; writes
+  // into (obj.px, obj.py) and returns depth z. Split out so nodes and beam
+  // points share it without allocating result objects.
+  var camCosY = 1, camSinY = 0, camCosX = 1, camSinX = 0, camCx = 0, camCy = 0, camScale = 1;
+  var FOCAL = 620;
+  function projectInto(p) {
+    var x1 = p.x * camCosY - p.z * camSinY;
+    var z1 = p.x * camSinY + p.z * camCosY;
+    var y2 = p.y * camCosX - z1 * camSinX;
+    var z2 = p.y * camSinX + z1 * camCosX;
+    var f = FOCAL / (FOCAL + z2) * camScale;
+    p.px = camCx + x1 * f;
+    p.py = camCy - y2 * f;
+    return { f: f, z: z2 };
+  }
+
+  function reproject() {
+    camCosY = Math.cos(rotY); camSinY = Math.sin(rotY);
+    camCosX = Math.cos(rotX); camSinX = Math.sin(rotX);
+    camCx = canvas.width / 2;
+    camCy = canvas.height / 2 + 40 * DPR;
+    camScale = DPR * 1.55 * zoom;
+    scene.nodes.forEach(function (n) {
+      var r = projectInto(n);
+      n.pz = r.z;
+      n.pk = Math.max(0.35, r.f / camScale * 0.9);
+    });
+    scene.beams.forEach(function (beam) {
+      beam.points.forEach(function (p) { projectInto(p); });
+    });
+    // painter's algorithm: larger z is FARTHER under this projection
+    // (f = focal/(focal+z)), so draw order is descending z — far first
+    scene.sorted.sort(function (a, b) { return b.pz - a.pz; });
+    cameraDirty = false;
+  }
+
+  function draw(now) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!scene || !scene.nodes.length) return;
+    if (cameraDirty) reproject();
+
+    var pulseElapsed = (now - scene.pulseT0) / 1000;
+
+    // 1) edges, batched by color bucket (z-order between edges is given up —
+    // invisible at these alphas; nodes still draw over them in depth order)
+    scene.edgeBuckets.forEach(function (bucket) {
+      ctx.beginPath();
+      var pairs = bucket.pairs;
+      for (var i = 0; i < pairs.length; i += 2) {
+        ctx.moveTo(pairs[i].px, pairs[i].py);
+        ctx.lineTo(pairs[i + 1].px, pairs[i + 1].py);
+      }
+      ctx.strokeStyle = bucket.color;
+      ctx.lineWidth = bucket.width * DPR;
+      ctx.stroke();
+    });
+
+    // 2) landmark beams — the only place shadowBlur survives (≤4 strokes)
+    scene.beams.forEach(function (beam) {
+      if (beam.offMesh) return;
+      var pts = beam.points;
+      if (!isFinite(pts[0].px) || !isFinite(pts[0].py)) return; // never let a bad beam kill the loop
+      var rgb = beam.rgb;
+      var peak = beam.thick ? 0.55 : 0.4;
+      ctx.beginPath();
+      for (var i = 0; i < pts.length; i++) {
+        if (i === 0) ctx.moveTo(pts[i].px, pts[i].py); else ctx.lineTo(pts[i].px, pts[i].py);
+      }
+      var grad = ctx.createLinearGradient(pts[0].px, pts[0].py, pts[pts.length - 1].px, pts[pts.length - 1].py);
+      grad.addColorStop(0, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.05)');
+      grad.addColorStop(0.5, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + peak + ')');
+      grad.addColorStop(1, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.05)');
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = (beam.thick ? 2.4 : 1.3) * DPR;
+      ctx.shadowColor = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.8)';
+      ctx.shadowBlur = (beam.thick ? 14 : 7) * DPR;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    });
+
+    // 3) synapse spokes, batched per color (drawn under all nodes); satellite
+    // screen positions are computed here once and cached for the dot pass
+    var spokeBuckets = {};
+    var sorted = scene.sorted;
+    for (var i = 0; i < sorted.length; i++) {
+      var n = sorted[i];
+      var sats = n.satellites;
+      for (var j = 0; j < sats.length; j++) {
+        var sat = sats[j];
+        if (!sat.show) continue;
+        var orbitR = sat.baseOrbit * DPR * n.pk;
+        sat.sx = n.px + sat.cosA * orbitR;
+        sat.sy = n.py + sat.sinA * orbitR * 0.55; // flatten for a pseudo-3D orbit under this camera tilt
+        var segs = spokeBuckets[sat.spokeColor];
+        if (!segs) segs = spokeBuckets[sat.spokeColor] = [];
+        segs.push(n.px, n.py, sat.sx, sat.sy);
+      }
+    }
+    ctx.lineWidth = 0.6 * DPR;
+    for (var color in spokeBuckets) {
+      var segs2 = spokeBuckets[color];
+      ctx.beginPath();
+      for (var k = 0; k < segs2.length; k += 4) {
+        ctx.moveTo(segs2[k], segs2[k + 1]);
+        ctx.lineTo(segs2[k + 2], segs2[k + 3]);
+      }
+      ctx.strokeStyle = color;
+      ctx.stroke();
+    }
+
+    // 4) nodes + satellites, far to near, all sprite blits — synapses orbit
+    // each node at a FIXED angle per greek (color = which greek, filled =
+    // positive, hollow ring = negative, distance = magnitude)
+    for (var m = 0; m < sorted.length; m++) {
+      var node = sorted[m];
+      var decay = node.pulseAmt > 0 ? Math.max(0, node.pulseAmt - pulseElapsed * 0.7) : 0;
+      if (reduceMotion) decay = 0;
+      var r = node.drawBase * DPR * node.pk * (1 + decay * 1.8);
+      if (r < 0.8) r = 0.8;
+      var w = r * FILL_DRAW;
+      ctx.drawImage(node.sprite, node.px - w / 2, node.py - w / 2, w, w);
+      if (decay > 0.02) {
+        ctx.globalAlpha = Math.min(1, decay);
+        var pw = w * 1.5;
+        ctx.drawImage(pulseSprite(), node.px - pw / 2, node.py - pw / 2, pw, pw);
+        ctx.globalAlpha = 1;
+      }
+      var sats2 = node.satellites;
+      for (var s2 = 0; s2 < sats2.length; s2++) {
+        var sat2 = sats2[s2];
+        if (!sat2.show) continue;
+        var dotR = sat2.baseDot * DPR;
+        if (dotR < 0.7) dotR = 0.7;
+        var dw = dotR * (sat2.hollow ? RING_DRAW : FILL_DRAW);
+        // a hollow ring below ~5px renders its stroke sub-pixel and reads as
+        // "nothing there" — floor it so negative greeks aren't underweighted
+        if (sat2.hollow && dw < 5 * DPR) dw = 5 * DPR;
+        ctx.drawImage(sat2.sprite, sat2.sx - dw / 2, sat2.sy - dw / 2, dw, dw);
+      }
+    }
+
+    // 5) on-mesh price labels, one per beam, anchored at the beam's chosen
+    // end, with anti-overlap: any label whose anchor lands within ~22px of an
+    // already-placed label gets pushed along its own direction until it clears
+    var placed = [];
+    scene.beams.forEach(function (beam) {
+      var pts = beam.points;
+      var top = beam.labelEnd === 'top';
+      var anchor = top ? pts[pts.length - 1] : pts[0];
+      if (!isFinite(anchor.px) || !isFinite(anchor.py)) return;
+      var y = anchor.py + (top ? -12 : 14) * DPR;
+      var dir = top ? -1 : 1;
+      var guard = 0;
+      while (placed.some(function (p) { return Math.abs(p.x - anchor.px) < 90 * DPR && Math.abs(p.y - y) < 22 * DPR; }) && guard < 6) {
+        y += dir * 18 * DPR;
+        guard++;
+      }
+      placed.push({ x: anchor.px, y: y });
+      drawLabel(beam.labelText, anchor.px, y, beam.labelColor);
+    });
+
+    window.__gexBrainFrames = (window.__gexBrainFrames || 0) + 1; // perf probe: sample twice to measure real frame activity
   }
 
   // On-mesh price labels for the key levels (spot/walls/flip) — a short-term
@@ -311,169 +652,26 @@
     ctx.fillText(text, x, y - 1.5 * DPR);
   }
 
-  var t0 = performance.now();
-  function frame(now) {
-    var dt = (now - t0) / 1000; t0 = now;
-    if (autoRotate && !reduceMotion) rotY += dt * 0.06;
-
-    var w = canvas.width, h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
-    var cx = w / 2, cy = h / 2 + 40 * DPR;
-    var scale = DPR * 1.55 * zoom;
-    var time = now / 1000;
-
-    var nodes = scene.nodes;
-    if (nodes.length) {
-      var proj = nodes.map(function (n) {
-        n.pulseT += dt;
-        var decay = Math.max(0, n.pulse - n.pulseT * 0.7);
-        var breathe = reduceMotion ? 1 : (0.85 + 0.15 * Math.sin(time * 1.6 + n.phase));
-        var pulseBoost = 1 + decay * 1.8;
-        var p = project(n, cx, cy, scale);
-        return { n: n, p: p, mag: breathe * pulseBoost, glow: decay };
-      });
-      // painter's algorithm: larger z is FARTHER under this projection
-      // (f = focal/(focal+z)), so draw order must be descending z — far first
-      var byZ = proj.slice().sort(function (a, b) { return b.p.z - a.p.z; });
-
-      var edgeSegs = scene.ringEdges.map(function (e) {
-        var a = project(e[0], cx, cy, scale), b = project(e[1], cx, cy, scale);
-        return { a: a, b: b, z: (a.z + b.z) / 2, g: (e[0].g + e[1].g) / 2, emph: emphasisFor(e[0].band) };
-      }).concat(scene.radialEdges.map(function (e) {
-        var a = project(e[0], cx, cy, scale), b = project(e[1], cx, cy, scale);
-        var emph = (emphasisFor(e[0].band) + emphasisFor(e[1].band)) / 2;
-        return { a: a, b: b, z: (a.z + b.z) / 2, g: (e[0].g + e[1].g) / 2, radial: true, emph: emph };
-      }));
-      edgeSegs.sort(function (a, b) { return b.z - a.z; });
-      edgeSegs.forEach(function (e) {
-        ctx.beginPath();
-        ctx.moveTo(e.a.x, e.a.y);
-        ctx.lineTo(e.b.x, e.b.y);
-        ctx.strokeStyle = e.radial ? 'rgba(90,110,128,' + (0.16 * e.emph).toFixed(3) + ')' : colorFor(e.g, 0.28 * e.emph);
-        ctx.lineWidth = (e.radial ? 0.6 : 0.9) * DPR;
-        ctx.stroke();
-      });
-
-      // landmark beams: spot, walls, flip — all-expiry levels drawn as
-      // verticals through every shell (off-mesh landmarks draw no line,
-      // only an edge-clamped label below)
-      var beamProjs = (scene.beams || []).map(function (beam) {
-        var pts = beam.points.map(function (p) { return project(p, cx, cy, scale); });
-        // defense in depth: a non-finite coordinate would make createLinearGradient
-        // throw and kill the rAF loop for the rest of the session — skip the line
-        if (beam.offMesh || !isFinite(pts[0].x) || !isFinite(pts[0].y)) return { beam: beam, pts: pts };
-        var rgb = beam.rgb;
-        var peak = beam.thick ? 0.55 : 0.4;
-        ctx.beginPath();
-        pts.forEach(function (p, idx) { if (idx === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
-        var grad = ctx.createLinearGradient(pts[0].x, pts[0].y, pts[pts.length - 1].x, pts[pts.length - 1].y);
-        grad.addColorStop(0, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.05)');
-        grad.addColorStop(0.5, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + peak + ')');
-        grad.addColorStop(1, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.05)');
-        ctx.strokeStyle = grad;
-        ctx.lineWidth = (beam.thick ? 2.4 : 1.3) * DPR;
-        ctx.shadowColor = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.8)';
-        ctx.shadowBlur = (beam.thick ? 14 : 7) * DPR;
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-        return { beam: beam, pts: pts };
-      });
-
-      byZ.forEach(function (item) {
-        var n = item.n, p = item.p;
-        var emph = emphasisFor(n.band);
-        var baseR = (1.6 + Math.abs(n.g) * 2.6) * item.mag;
-        var r = baseR * Math.max(0.35, p.f / scale * 0.9) * DPR * (0.55 + 0.45 * emph);
-        var col = colorFor(n.g, 0.9 * emph);
-        ctx.beginPath();
-        ctx.fillStyle = col;
-        ctx.shadowColor = item.glow > 0.02 ? 'rgba(244,247,250,' + Math.min(1, item.glow).toFixed(2) + ')' : col;
-        ctx.shadowBlur = (item.glow > 0.02 ? 16 : 9) * DPR * emph;
-        ctx.arc(p.x, p.y, Math.max(0.8, r), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-
-        // synapses: the three non-primary greeks, orbiting this node at a
-        // FIXED angle per greek (no spin — a rotating position can't serve as
-        // an identifier). Color identifies WHICH greek (own hue per greek,
-        // stable across which one is primary); filled vs hollow-ring is sign
-        // (+/-); distance from the node is magnitude. A faint spoke connects
-        // the node to the dot so small orbits stay traceable.
-        (n.satellites || []).forEach(function (sat) {
-          if (Math.abs(sat.norm) < SATELLITE_THRESHOLD) return;
-          var ang = sat.angle;
-          var orbitR = (4 + Math.min(1, Math.abs(sat.norm)) * 11) * DPR * Math.max(0.35, p.f / scale * 0.9);
-          var sx = p.x + Math.cos(ang) * orbitR;
-          var sy = p.y + Math.sin(ang) * orbitR * 0.55; // flatten for a pseudo-3D orbit under this camera tilt
-          var rgb = GREEK_META[sat.key].dotColor;
-          var mag = Math.min(1, Math.abs(sat.norm));
-          var alpha = (0.55 + 0.4 * mag) * emph;
-          var scol = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + alpha.toFixed(3) + ')';
-          var dotR = Math.max(0.7, (1.1 + mag * 1.1) * DPR);
-
-          ctx.beginPath();
-          ctx.strokeStyle = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + (0.22 * emph).toFixed(3) + ')';
-          ctx.lineWidth = 0.6 * DPR;
-          ctx.moveTo(p.x, p.y);
-          ctx.lineTo(sx, sy);
-          ctx.stroke();
-
-          ctx.beginPath();
-          ctx.shadowColor = scol;
-          ctx.shadowBlur = 5 * DPR * emph;
-          ctx.arc(sx, sy, dotR, 0, Math.PI * 2);
-          if (sat.norm >= 0) {
-            ctx.fillStyle = scol;
-            ctx.fill();
-          } else {
-            ctx.strokeStyle = scol;
-            ctx.lineWidth = 1.1 * DPR;
-            ctx.stroke();
-          }
-          ctx.shadowBlur = 0;
-        });
-      });
-
-      // on-mesh price labels, one per beam, anchored at the beam's chosen
-      // end. Collected first (not drawn immediately) so overlapping labels —
-      // common when a wall and the flip sit at neighboring strikes — can be
-      // pushed apart instead of rendering as unreadable stacked text.
-      var pending = [];
-      beamProjs.forEach(function (bp) {
-        var beam = bp.beam, pts = bp.pts;
-        var top = beam.labelEnd === 'top';
-        var anchor = top ? pts[pts.length - 1] : pts[0];
-        var cssColor = 'rgb(' + beam.rgb[0] + ',' + beam.rgb[1] + ',' + beam.rgb[2] + ')';
-        var text = beam.label + ' ' + fmtPrice(beam.price) + (beam.offMesh ? ' (off-mesh)' : '');
-        pending.push({ text: text, x: anchor.x, y: anchor.y + (top ? -12 : 14) * DPR, color: cssColor, dir: top ? -1 : 1 });
-      });
-
-      // anti-overlap: any label whose anchor lands within ~22px of an
-      // already-placed label gets pushed further along its own direction
-      // (above labels push further up, below labels push further down)
-      // until it clears — cheap, but enough for the handful of labels here.
-      var placed = [];
-      pending.forEach(function (lbl) {
-        var y = lbl.y;
-        var guard = 0;
-        while (placed.some(function (p) { return Math.abs(p.x - lbl.x) < 90 * DPR && Math.abs(p.y - y) < 22 * DPR; }) && guard < 6) {
-          y += lbl.dir * 18 * DPR;
-          guard++;
-        }
-        placed.push({ x: lbl.x, y: y });
-        drawLabel(lbl.text, lbl.x, y, lbl.color);
-      });
-    }
-
-    requestAnimationFrame(frame);
-  }
-  requestAnimationFrame(frame);
-
   // ---------------------------------------------------------------- data loop
   var POLL_MS = 20000;
   var pollTimer = null;
   var currentSymbol = 'SPX';
+  var lastBuiltSymbol = ''; // last symbol whose data actually reached the screen
   var loadSeq = 0;
+
+  // After every successful poll, re-baseline the diff-glow for ALL four greeks
+  // (not just the one on screen) so clicking a greek chip later diffs against
+  // this poll, not against whenever that tab was last viewed.
+  function refreshBaselines(payload) {
+    GREEK_ORDER.forEach(function (k) {
+      var ak = GREEK_META[k].key;
+      var map = new Map();
+      payload.bands.forEach(function (band) {
+        band[ak].forEach(function (raw, si) { map.set(band.name + '_' + payload.strikes[si], raw); });
+      });
+      prevValues[k] = map;
+    });
+  }
 
   function fmtPrice(v) { return v == null || !isFinite(v) ? '—' : Math.round(v).toLocaleString(); }
   function fmtGex(v) {
@@ -566,9 +764,14 @@
   function renderActiveGreek() {
     if (!lastPayload) return;
     var built = buildScene(lastPayload, activeGreek);
-    if (built) scene = built;
+    if (built) {
+      scene = built;
+      cameraDirty = true;
+      armPulses(scene);
+    }
     updateReadout(lastPayload, activeGreek);
     updateLegend(activeGreek);
+    requestRender();
   }
 
   document.querySelectorAll('#greeks .chip').forEach(function (chip) {
@@ -583,9 +786,10 @@
 
   async function load(sym) {
     var seq = ++loadSeq;
+    // currentSymbol updates optimistically so the poll loop retries the
+    // REQUESTED symbol; the title/backLink update only on success, so the
+    // header can never name a symbol whose data isn't actually on screen.
     currentSymbol = sym;
-    document.getElementById('titleTicker').textContent = sym;
-    document.getElementById('backLink').href = 'index.html?symbol=' + encodeURIComponent(sym);
     setStatus('loading ' + sym + '…');
     try {
       var res = await fetch('api/brain?symbol=' + encodeURIComponent(sym), { headers: { accept: 'application/json' } });
@@ -594,14 +798,24 @@
       if (!res.ok || !json || json.error) {
         throw new Error((json && json.error) || ('HTTP ' + res.status));
       }
+      if (sym !== lastBuiltSymbol) {
+        prevValues = {}; // never diff one symbol's strikes against another's
+        lastBuiltSymbol = sym;
+      }
       var built = buildScene(json, activeGreek);
       if (!built) throw new Error('mesh had no strikes in range');
       scene = built;
+      cameraDirty = true;
+      armPulses(scene);
       lastPayload = json;
+      refreshBaselines(json);
+      document.getElementById('titleTicker').textContent = sym;
+      document.getElementById('backLink').href = 'index.html?symbol=' + encodeURIComponent(sym);
       updateReadout(json, activeGreek);
       updateLegend(activeGreek);
       banner('');
       setStatus('live · ' + sym + ' · next refresh in ' + (POLL_MS / 1000) + 's', false);
+      requestRender();
     } catch (err) {
       if (seq !== loadSeq) return;
       setStatus('error · ' + sym, true);
@@ -624,7 +838,8 @@
     if (e.key === 'Enter') document.getElementById('load').click();
   });
 
-  // seed from ?symbol=
+  // initial canvas setup + seed from ?symbol=
+  resize();
   var params = new URLSearchParams(location.search);
   var initial = (params.get('symbol') || 'SPX').toUpperCase().replace(/[^A-Z^_.]/g, '') || 'SPX';
   document.getElementById('symbol').value = initial;
