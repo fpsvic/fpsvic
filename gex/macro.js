@@ -264,7 +264,9 @@
 
   // ---------------------------------------------------------------- sweep loop
   async function fetchBrain(sym) {
-    var res = await fetch('api/brain?symbol=' + encodeURIComponent(sym) + '&prefer=cboe', { headers: { accept: 'application/json' } });
+    // one hung ticker must not wedge its pool worker for the rest of the sweep
+    var res = await fetch('api/brain?symbol=' + encodeURIComponent(sym) + '&prefer=cboe',
+      { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(30000) });
     var json = await res.json().catch(function () { return null; });
     if (!res.ok || !json || json.error) throw new Error((json && json.error) || ('HTTP ' + res.status));
     return json;

@@ -350,9 +350,45 @@
       });
     });
 
+    // strike ticks: ~10 price labels along the inner rim, favoring the
+    // roundest strike in each stretch — deformations map to tradable levels
+    // at a glance instead of only on hover
+    var ticks = [];
+    if (strikes.length >= 2) {
+      var tickStep = Math.max(1, Math.ceil(strikes.length / 10));
+      var roundness = function (p) {
+        if (p % 1000 === 0) return 7;
+        if (p % 500 === 0) return 6;
+        if (p % 100 === 0) return 5;
+        if (p % 50 === 0) return 4;
+        if (p % 10 === 0) return 3;
+        if (p % 5 === 0) return 2;
+        if (p % 1 === 0) return 1; // integers beat half-dollar strikes on 0.5-spaced grids
+        return 0;
+      };
+      var rim = BAND_META['0DTE'];
+      for (var tk = 0; tk < strikes.length; tk += tickStep) {
+        var bestTick = tk, bestScore = -1;
+        for (var tj = tk; tj < Math.min(strikes.length, tk + tickStep); tj++) {
+          var sc = roundness(strikes[tj]);
+          if (sc > bestScore) { bestScore = sc; bestTick = tj; }
+        }
+        var tTheta = (bestTick / (strikes.length - 1) - 0.5) * THETA_SPAN;
+        var tR = rim.radius - 26; // just inside the innermost shell
+        ticks.push({
+          // fmtPrice rounds — a tick at 22.5 must not claim to be 23
+          label: strikes[bestTick] % 1 === 0 ? fmtPrice(strikes[bestTick]) : String(strikes[bestTick]),
+          x: tR * Math.cos(rim.phi) * Math.sin(tTheta),
+          y: tR * Math.sin(rim.phi) - rim.tilt,
+          z: tR * Math.cos(rim.phi) * Math.cos(tTheta),
+          px: 0, py: 0,
+        });
+      }
+    }
+
     var built = {
       nodes: nodes, ringEdges: ringEdges, radialEdges: radialEdges, nodeGrid: nodeGrid, nodeByPrice: nodeByPrice,
-      beams: beams, bandMarkers: bandMarkers, strikes: strikes, spot: payload.spot,
+      beams: beams, bandMarkers: bandMarkers, ticks: ticks, strikes: strikes, spot: payload.spot,
       sorted: nodes.slice(),      // depth order, re-sorted on camera change
       edgeBuckets: [],            // filled by applyDerived
       maxPulse: maxPulse,
@@ -443,6 +479,10 @@
 
   function hitNode(clientX, clientY) {
     if (!scene) return null;
+    // rAF is suspended while the window is hidden/occluded — a routine state
+    // for a tool parked behind an execution platform — so projections may
+    // never have run for this scene. Hit-testing must not read stale zeros.
+    if (cameraDirty) reproject();
     var x = clientX * DPR, y = clientY * DPR;
     var best = null, bestD2 = Math.pow(11 * DPR, 2);
     var nodes = scene.nodes;
@@ -486,9 +526,99 @@
       row.append(dot, name, val);
       tipEl.append(row);
     });
+    // pinned nodes get a sparkline: the day's trajectory of THIS strike's
+    // active greek, extracted server-side from the archive — the "watch the
+    // level" loop. Hover-only tooltips skip it (no request spam while roaming).
+    if (pinnedKey) {
+      var spark = document.createElement('canvas');
+      spark.className = 'tip-spark';
+      // size at creation: an unsized canvas is 300x150 by default, which would
+      // balloon the tooltip on the loading/no-history/error paths (drawSpark
+      // only sizes it on the success path)
+      spark.width = 150 * DPR;
+      spark.height = 36 * DPR;
+      spark.style.width = '150px';
+      spark.style.height = '36px';
+      var cap = document.createElement('div');
+      cap.className = 'tip-spark-cap';
+      cap.textContent = 'loading day series…';
+      tipEl.append(spark, cap);
+      var seq = ++sparkSeq;
+      fetchSeries(node).then(function (series) {
+        if (seq !== sparkSeq || !document.body.contains(spark)) return; // tooltip rebuilt since
+        var pts = (series.points || []).filter(function (p) { return p.v != null; });
+        if (pts.length < 2) { cap.textContent = 'no history yet — the archive is still building'; return; }
+        cap.textContent = (series.day || 'today') + ' · ' + GREEK_META[activeGreek].short + ' · ' + pts.length + ' snapshots';
+        drawSpark(spark, series.points);
+      }).catch(function (err) {
+        if (seq !== sparkSeq || !document.body.contains(cap)) return;
+        cap.textContent = 'series unavailable: ' + err.message;
+      });
+    }
+
     tipEl.style.display = 'block';
     positionTip(node);
     requestRender(); // draw the highlight ring
+  }
+
+  var sparkSeq = 0;
+  function fetchSeries(node) {
+    var sym = pb.active ? pb.symbol : currentSymbol;
+    var q = 'api/brain/series?symbol=' + encodeURIComponent(sym) +
+      '&band=' + encodeURIComponent(node.band) + '&strike=' + node.strike +
+      '&greek=' + encodeURIComponent(activeGreek) +
+      (pb.active ? '&day=' + encodeURIComponent(pb.day) : '');
+    return fetch(q, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20000) })
+      .then(function (res) {
+        return res.json().catch(function () { return null; }).then(function (json) {
+          if (!res.ok || !json || json.error) throw new Error((json && json.error) || ('HTTP ' + res.status));
+          return json;
+        });
+      });
+  }
+
+  function drawSpark(canvas, points) {
+    var w = 150, h = 36;
+    canvas.width = w * DPR;
+    canvas.height = h * DPR;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    var g = canvas.getContext('2d');
+    var vals = points.map(function (p) { return p.v; }).filter(function (v) { return v != null; });
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    if (hi === lo) { lo -= 1; hi += 1; }
+    var pad = 3 * DPR;
+    function X(i) { return pad + (i / Math.max(1, points.length - 1)) * (canvas.width - 2 * pad); }
+    function Y(v) { return pad + (1 - (v - lo) / (hi - lo)) * (canvas.height - 2 * pad); }
+
+    if (lo < 0 && hi > 0) { // the sign boundary matters for signed exposures
+      g.strokeStyle = 'rgba(124,138,153,0.4)';
+      g.lineWidth = 1;
+      g.setLineDash([3, 3]);
+      g.beginPath(); g.moveTo(pad, Y(0)); g.lineTo(canvas.width - pad, Y(0)); g.stroke();
+      g.setLineDash([]);
+    }
+    var last = vals[vals.length - 1];
+    var rgb = last >= 0 ? '53,214,176' : '255,122,82';
+    g.strokeStyle = 'rgba(' + rgb + ',0.9)';
+    g.lineWidth = 1.3 * DPR;
+    g.beginPath();
+    var open = false;
+    for (var i = 0; i < points.length; i++) {
+      if (points[i].v == null) { open = false; continue; } // gap: strike outside that snapshot's window
+      if (!open) { g.moveTo(X(i), Y(points[i].v)); open = true; }
+      else g.lineTo(X(i), Y(points[i].v));
+    }
+    g.stroke();
+    for (var j = points.length - 1; j >= 0; j--) {
+      if (points[j].v != null) {
+        g.beginPath();
+        g.fillStyle = 'rgba(' + rgb + ',1)';
+        g.arc(X(j), Y(points[j].v), 2 * DPR, 0, Math.PI * 2);
+        g.fill();
+        break;
+      }
+    }
   }
 
   function positionTip(node) {
@@ -524,8 +654,24 @@
     dragDist = 0;
     lastX = e.clientX; lastY = e.clientY;
     canvas.classList.add('dragging');
-    canvas.setPointerCapture(e.pointerId);
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events have no active pointer */ }
   });
+
+  // debug probe (used by the live-verification tooling; harmless in production)
+  window.__gexInspect = function (x, y) {
+    var n = scene ? hitNode(x, y) : null;
+    return {
+      hoverKey: hoverKey, pinnedKey: pinnedKey,
+      nodeCount: scene ? scene.nodes.length : 0,
+      hit: n ? { band: n.band, strike: n.strike, px: n.px, py: n.py } : null,
+      pxRange: scene && scene.nodes.length ? [
+        Math.round(Math.min.apply(null, scene.nodes.map(function (q) { return q.px; }))),
+        Math.round(Math.max.apply(null, scene.nodes.map(function (q) { return q.px; }))),
+        Math.round(Math.min.apply(null, scene.nodes.map(function (q) { return q.py; }))),
+        Math.round(Math.max.apply(null, scene.nodes.map(function (q) { return q.py; }))),
+      ] : null,
+    };
+  };
   canvas.addEventListener('pointermove', function (e) {
     lastPtrX = e.clientX; lastPtrY = e.clientY;
     if (dragging) {
@@ -581,6 +727,12 @@
   }, { passive: false });
 
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // when the window comes back from hidden/occluded, rAF resumes — repaint so
+  // the canvas shows the current book, not whatever was on screen at suspend
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) { cameraDirty = true; requestRender(); }
+  });
 
   // ---------------------------------------------------------------- render loop (on demand)
   var needsRender = false, rafPending = false, cameraDirty = true;
@@ -653,6 +805,7 @@
       beam.points.forEach(function (p) { projectInto(p); });
     });
     scene.bandMarkers.forEach(function (mk) { projectInto(mk); });
+    scene.ticks.forEach(function (t) { projectInto(t); });
     // painter's algorithm: larger z is FARTHER under this projection
     // (f = focal/(focal+z)), so draw order is descending z — far first
     scene.sorted.sort(function (a, b) { return b.pz - a.pz; });
@@ -679,6 +832,18 @@
       ctx.lineWidth = bucket.width * DPR;
       ctx.stroke();
     });
+
+    // 1.5) strike ticks along the inner rim — faint price grid furniture
+    if (scene.ticks.length) {
+      ctx.font = (9 * DPR) + 'px ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace';
+      ctx.fillStyle = 'rgba(124,138,153,0.55)';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (var ti = 0; ti < scene.ticks.length; ti++) {
+        var tick = scene.ticks[ti];
+        if (isFinite(tick.px)) ctx.fillText(tick.label, tick.px, tick.py);
+      }
+    }
 
     // 2) landmark beams — the only place shadowBlur survives (≤4 strokes)
     scene.beams.forEach(function (beam) {
@@ -877,6 +1042,27 @@
   }
 
   function fmtPrice(v) { return v == null || !isFinite(v) ? '—' : Math.round(v).toLocaleString(); }
+
+  /* The "As of" row must tell the truth about age: which feed, whether it's
+   * delayed, and how stale THIS payload is — refreshed every few seconds so a
+   * quiet failure can't masquerade as fresh data. Runs off lastPayload, so in
+   * playback it honestly reports the archived snapshot's age. */
+  function refreshAsof() {
+    var el = document.getElementById('r-asof');
+    if (!lastPayload) { el.textContent = '—'; return; }
+    var src = /tradier/i.test(lastPayload.source || '') ? 'Tradier'
+      : /cboe/i.test(lastPayload.source || '') ? 'CBOE delayed'
+      : (lastPayload.source || '—');
+    var stamp = Date.parse(lastPayload.computedAt || lastPayload.asof || '');
+    var age = '';
+    if (isFinite(stamp)) {
+      var s = Math.max(0, Math.round((Date.now() - stamp) / 1000));
+      age = s < 90 ? s + 's' : s < 5400 ? Math.round(s / 60) + 'm' : (s / 3600).toFixed(1) + 'h';
+      el.title = new Date(stamp).toISOString();
+    }
+    el.textContent = src + (age ? ' · ' + age + ' old' : '');
+  }
+  setInterval(function () { if (!document.hidden) refreshAsof(); }, 5000);
   function fmtGex(v) {
     if (v == null || !isFinite(v)) return '—';
     var sign = v >= 0 ? '+' : '';
@@ -905,7 +1091,7 @@
     var netVal = payload.landmarks[meta.netField];
     gexEl.textContent = fmtGex(netVal);
     gexEl.className = 'v mono ' + (netVal >= 0 ? 'call' : 'put');
-    document.getElementById('r-asof').textContent = payload.source ? payload.source.replace(/\s*\(.*\)/, '') : (payload.asof || '—');
+    refreshAsof();
 
     // secondary (synapse) greeks: compact net-value readout for the other three
     var secondary = GREEK_ORDER.filter(function (k) { return k !== greekKey; });
@@ -1000,6 +1186,9 @@
     });
   });
 
+  var pollFails = 0; // consecutive live-load failures, drives the retry backoff
+  function nextPollDelay() { return Math.min(120000, POLL_MS * (1 + pollFails)); }
+
   async function load(sym) {
     if (pb.active) return; // no live load may touch the scene while playback owns it
     var seq = ++loadSeq;
@@ -1009,7 +1198,10 @@
     currentSymbol = sym;
     setStatus('loading ' + sym + '…');
     try {
-      var res = await fetch('api/brain?symbol=' + encodeURIComponent(sym), { headers: { accept: 'application/json' } });
+      // a hung upstream (cold rebuild against a flaky feed) must never stall
+      // the poll chain forever — timeout, count it, back off, retry
+      var res = await fetch('api/brain?symbol=' + encodeURIComponent(sym),
+        { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(45000) });
       var json = await res.json().catch(function () { return null; });
       if (seq !== loadSeq) return; // superseded by a newer load
       if (!res.ok || !json || json.error) {
@@ -1035,11 +1227,13 @@
       updateBandTags(json);
       reconcileTip();
       banner('');
+      pollFails = 0;
       setStatus('live · ' + sym + ' · next refresh in ' + (POLL_MS / 1000) + 's', false);
       requestRender();
     } catch (err) {
       if (seq !== loadSeq) return;
-      setStatus('error · ' + sym, true);
+      pollFails++;
+      setStatus('error · ' + sym + ' · retry in ' + Math.round(nextPollDelay() / 1000) + 's', true);
       banner('Could not build the brain mesh for ' + sym + ': ' + err.message + '. Is "node gex/server.js" running?');
     }
   }
@@ -1050,7 +1244,7 @@
     // resurrect polling while playback owns the view
     if (pb.active) return;
     clearTimeout(pollTimer);
-    pollTimer = setTimeout(function () { load(currentSymbol).then(scheduleNext); }, POLL_MS);
+    pollTimer = setTimeout(function () { load(currentSymbol).then(scheduleNext); }, nextPollDelay());
   }
 
   document.getElementById('load').addEventListener('click', function () {
@@ -1092,7 +1286,8 @@
 
   async function fetchHistoryList(sym, day) {
     var q = 'api/brain/history?symbol=' + encodeURIComponent(sym) + (day ? '&day=' + encodeURIComponent(day) : '');
-    var res = await fetch(q, { headers: { accept: 'application/json' } });
+    // a hung list fetch would latch pb.entering and silently kill the HISTORY toggle
+    var res = await fetch(q, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
     var json = await res.json().catch(function () { return null; });
     if (!res.ok || !json || json.error) throw new Error((json && json.error) || ('HTTP ' + res.status));
     return json;
@@ -1164,7 +1359,7 @@
     var symbol = pb.symbol;
     var promise = (async function () {
       var res = await fetch('api/brain/snapshot?symbol=' + encodeURIComponent(symbol) + '&day=' + pb.day + '&file=' + pb.list[i],
-        { headers: { accept: 'application/json' } });
+        { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
       var json = await res.json().catch(function () { return null; });
       if (!res.ok || !json || json.error) throw new Error((json && json.error) || ('HTTP ' + res.status));
       if (json.symbol && json.symbol !== symbol) throw new Error('archive returned ' + json.symbol + ' for ' + symbol);

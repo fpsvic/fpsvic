@@ -117,12 +117,18 @@ const CBOE_HEADERS = {
   'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
 };
 
+// Upstream requests must settle: a hung socket would wedge the shared
+// in-flight cache slot for minutes, stall every poller waiting on it, and
+// keep the negative cache from ever engaging. Node fetch has no default
+// timeout; 20s comfortably beats the client's own 45s budget.
+const UPSTREAM_TIMEOUT_MS = 20_000;
+
 // Equities/ETFs are plain (SPY.json); indexes are underscore-prefixed (_SPX.json).
 async function cboeGetEither(base, symbol) {
   let lastErr = null;
   for (const s of [symbol, `_${symbol}`]) {
     try {
-      const res = await fetch(`${base}${encodeURIComponent(s)}.json`, { headers: CBOE_HEADERS });
+      const res = await fetch(`${base}${encodeURIComponent(s)}.json`, { headers: CBOE_HEADERS, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
       if (!res.ok) { lastErr = new Error(`CBOE HTTP ${res.status} for ${s}`); continue; }
       return await res.text();
     } catch (err) {
@@ -153,7 +159,7 @@ async function fetchHistoryCboe(symbol) {
 
 // Lightweight VIX spot (delayed ~15 min) for cross-checking the chain-derived proxy.
 async function fetchVixQuoteCboe() {
-  const res = await fetch('https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json', { headers: CBOE_HEADERS });
+  const res = await fetch('https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json', { headers: CBOE_HEADERS, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`CBOE HTTP ${res.status} for _VIX quote`);
   const json = await res.json();
   const vix = Number(json?.data?.current_price ?? NaN);
@@ -173,6 +179,7 @@ async function tradierGet(pathname, params, fetchImpl = fetch) {
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   const res = await fetchImpl(url, {
     headers: { authorization: `Bearer ${TRADIER_TOKEN}`, accept: 'application/json' },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Tradier HTTP ${res.status} for ${pathname}`);
   return res.json();
@@ -465,6 +472,13 @@ function readJsonBody(req, limit = ANALYZE_MAX_BODY) {
 
 // ---------------------------------------------------------------- routing
 
+// Failed upstream fetches are remembered briefly so a dead ticker polled every
+// 20s (brain) or swept every 60s (macro) doesn't hammer CBOE/Tradier with a
+// doomed request per poll — the audit called this out after a bad symbol
+// retried indefinitely. Success clears the entry via the normal cache path.
+const FAIL_CACHE_MS = 30_000;
+const failCache = new Map(); // `${source}:${symbol}` -> { until, msg }
+
 async function fetchChain(symbol, requestedSource, { preferCboe = false } = {}) {
   // unless a source was forced, fall back to the other one on failure; each
   // body is cached under its TRUE source key, so a fallback body can never
@@ -479,10 +493,17 @@ async function fetchChain(symbol, requestedSource, { preferCboe = false } = {}) 
 
   const errors = [];
   for (const source of order) {
+    const fkey = `${source}:${symbol}`;
+    const recent = failCache.get(fkey);
+    if (recent && Date.now() < recent.until) {
+      errors.push(`${source}: ${recent.msg} (cached failure)`);
+      continue;
+    }
     try {
       return await cached(`${source}:${symbol}`, CACHE_MS, () =>
         source === 'tradier' ? fetchChainTradier(symbol) : fetchChainCboe(symbol));
     } catch (err) {
+      failCache.set(fkey, { until: Date.now() + FAIL_CACHE_MS, msg: err.message });
       errors.push(`${source}: ${err.message}`);
       console.error(`[gex] ${symbol} via ${source} failed: ${err.message}`);
     }
@@ -608,6 +629,50 @@ function archiveBrainSnapshot(symbol, body, now, sourceLabel) {
     .catch((err) => console.error(`[gex] archive ${symbol} failed: ${err.message}`));
 }
 
+/* Archive maintenance: report size at startup (growth is ~10 MB/day/symbol,
+ * which deserves visibility), and prune day-directories older than
+ * GEX_ARCHIVE_KEEP_DAYS — strictly OPT-IN, because deleting market history
+ * contradicts the archive's whole premise (unwritten data can never be
+ * backfilled); the default keeps everything forever. Runs at startup and
+ * daily thereafter. */
+const ARCHIVE_KEEP_DAYS = Number(process.env.GEX_ARCHIVE_KEEP_DAYS || 0);
+
+async function archiveMaintenance() {
+  if (ARCHIVE_OFF) return;
+  let fileCount = 0, byteCount = 0, pruned = 0;
+  const dayNames = new Set();
+  const cutoff = ARCHIVE_KEEP_DAYS > 0
+    ? new Date(Date.now() - ARCHIVE_KEEP_DAYS * 86400e3).toISOString().slice(0, 10)
+    : null;
+  try {
+    const symbols = await fs.promises.readdir(ARCHIVE_DIR);
+    for (const sym of symbols) {
+      const symDir = path.join(ARCHIVE_DIR, sym);
+      let days = [];
+      try { days = (await fs.promises.readdir(symDir)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)); } catch { continue; }
+      for (const day of days) {
+        const dayDir = path.join(symDir, day);
+        if (cutoff && day < cutoff) {
+          await fs.promises.rm(dayDir, { recursive: true, force: true });
+          pruned++;
+          continue;
+        }
+        dayNames.add(day);
+        try {
+          const files = await fs.promises.readdir(dayDir);
+          fileCount += files.length;
+          for (const f of files) {
+            try { byteCount += (await fs.promises.stat(path.join(dayDir, f))).size; } catch { /* raced a write */ }
+          }
+        } catch { /* raced a prune */ }
+      }
+    }
+    console.log('[gex] brain archive: %d snapshots, %s MB, %d day(s)%s',
+      fileCount, (byteCount / 1e6).toFixed(1), dayNames.size,
+      pruned ? ` · pruned ${pruned} day-dir(s) older than ${ARCHIVE_KEEP_DAYS}d` : (ARCHIVE_KEEP_DAYS ? '' : ' · retention: keep forever (GEX_ARCHIVE_KEEP_DAYS to prune)'));
+  } catch { /* no archive yet */ }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -723,6 +788,61 @@ const server = http.createServer(async (req, res) => {
     } catch {
       res.writeHead(404, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ error: 'snapshot not found' }));
+    }
+  }
+
+  // One strike's greek trajectory across a day's archive, extracted
+  // server-side — the client would otherwise fetch dozens of full snapshot
+  // bodies to draw one sparkline. Same majority-tag discipline as the history
+  // route so the series is one source's coherent story. Memoized briefly: the
+  // pinned-node tooltip refetches on every poll.
+  if (url.pathname === '/api/brain/series') {
+    const symbol = String(url.searchParams.get('symbol') || '').toUpperCase().replace(/[^A-Z^_.]/g, '');
+    const dayParam = String(url.searchParams.get('day') || '');
+    const band = String(url.searchParams.get('band') || '');
+    const strike = Number(url.searchParams.get('strike'));
+    const greek = { gamma: 'gex', vanna: 'vanna', charm: 'charm', delta: 'delta' }[url.searchParams.get('greek')];
+    if (!symbol || !band || !isFinite(strike) || !greek) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'need ?symbol=&band=&strike=&greek=gamma|vanna|charm|delta (&day=)' }));
+    }
+    const symDir = path.normalize(path.join(ARCHIVE_DIR, symbol));
+    if (!symDir.startsWith(ARCHIVE_DIR + path.sep)) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'bad symbol' }));
+    }
+    try {
+      const key = `series:${symbol}:${dayParam || 'latest'}:${band}:${strike}:${greek}`;
+      const body = await cached(key, CACHE_MS, async () => {
+        let days = [];
+        try { days = (await fs.promises.readdir(symDir)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort(); } catch { /* none */ }
+        const day = /^\d{4}-\d{2}-\d{2}$/.test(dayParam) && days.includes(dayParam) ? dayParam : days[days.length - 1];
+        if (!day) return JSON.stringify({ symbol, day: null, points: [] });
+        let files = [];
+        try { files = (await fs.promises.readdir(path.join(symDir, day))).filter((f) => /^\d{6}Z-[a-z]{1,12}\.json$/.test(f)).sort(); } catch { /* raced */ }
+        const byTag = {};
+        for (const f of files) (byTag[f.slice(8, -5)] = byTag[f.slice(8, -5)] || []).push(f);
+        const tag = Object.keys(byTag).sort((a, b) => byTag[b].length - byTag[a].length)[0] || null;
+        const series = tag ? byTag[tag] : [];
+        const points = await Promise.all(series.map(async (f) => {
+          const t = f.slice(0, 7); // HHMMSSZ
+          try {
+            const snap = JSON.parse(await fs.promises.readFile(path.join(symDir, day, f), 'utf8'));
+            const b = (snap.bands || []).find((x) => x.name === band);
+            const si = (snap.strikes || []).findIndex((s) => Math.abs(s - strike) < 1e-9);
+            const v = b && si >= 0 && Array.isArray(b[greek]) ? b[greek][si] : null;
+            return { t, v: v == null || !isFinite(v) ? null : v };
+          } catch {
+            return { t, v: null }; // unreadable snapshot -> gap, not a dead series
+          }
+        }));
+        return JSON.stringify({ symbol, day, tag, band, strike, greek: url.searchParams.get('greek'), points });
+      });
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(body);
+    } catch (err) {
+      res.writeHead(502, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: `series failed: ${err.message}` }));
     }
   }
 
@@ -855,6 +975,8 @@ if (!process.env.GEX_NO_LISTEN) {
     console.log('Data source: %s', TRADIER_TOKEN ? `Tradier (${TRADIER_BASE})` : 'CBOE delayed quotes');
     console.log('AI reads: %s', ANTHROPIC_KEY ? `enabled (${ANTHROPIC_MODEL}, effort ${ANTHROPIC_EFFORT})` : 'disabled (set ANTHROPIC_API_KEY in gex/.env)');
     console.log('Brain archive: %s', ARCHIVE_OFF ? 'disabled (GEX_NO_ARCHIVE)' : ARCHIVE_DIR);
+    archiveMaintenance();
+    setInterval(archiveMaintenance, 24 * 3600e3).unref();
     console.log('Scanner: http://localhost:%d/  ·  single-ticker dashboard: http://localhost:%d/index.html?symbol=SPX (or ?demo=1)', PORT, PORT);
   });
 }

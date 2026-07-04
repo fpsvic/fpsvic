@@ -15,6 +15,21 @@ the same batch: every fresh brain build lands in `gex/data/brain/` (gitignored;
 `GEX_NO_ARCHIVE=1` to disable). Still open from fix-first: #6
 (node tooltip), #9 (synapse sign legibility), #10 (strike ticks), #12–15, rest of #16.
 
+**Status 2026-07-04, freshness layer (#14) + pinned sparklines (#4 seed) + strike ticks (#10) + archive maintenance: landed.**
+Timeouts on every fetch (client 45s/30s/20s tiers, server upstream 20s per HTTP call),
+consecutive-failure poll backoff (cap 120s, surfaced in the status line), server-side
+negative caching of failed upstreams (30s), an honest "As of" row (feed + payload age,
+5s refresh — reports archived-snapshot age in playback). `/api/brain/series` extracts one
+strike's greek trajectory from the day's archive (majority-tag, memoized); pinned-node
+tooltips draw it as a sparkline with a zero-crossing line — the "watch the level" loop.
+~10 round-number strike ticks along the inner rim (integer-aware on 0.5-spaced grids).
+Archive maintenance: startup/daily size report; pruning strictly opt-in via
+GEX_ARCHIVE_KEEP_DAYS. Occlusion robustness (found live): rAF suspends for hidden/occluded
+windows, so hit-testing now reprojects synchronously when needed, visibilitychange
+repaints on return, and setPointerCapture failures can't abort pointerdown. Remaining:
+"since open" pulse mode, pinned-node click-through/alerts (roadmap #4 proper), signed
+delta follow-ups (#7 is done), retention compaction if the archive ever gets heavy.
+
 **Status 2026-07-04, playback UI (roadmap #2, read side): landed.** HISTORY button on the
 brain view scrubs the day's archived snapshots: day picker, slider, play/pause, arrow
 keys; pulses show inter-snapshot changes while scrubbing; greek chips + tooltips work on
