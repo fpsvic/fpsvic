@@ -344,6 +344,29 @@ test('buildSnapshot shape: required fields, r2 rounding, null-safe vol block', (
   assert.equal(E.buildSnapshot(ch2, { ok: false }, {}).spot, 100.99);
 });
 
+test('buildSnapshot carries the vanna/charm picture: flips, 1w nets, per-strike curves', () => {
+  const ch = E.parseCboe(flatCboe(), 'TEST', NOW);
+  const snap = E.buildSnapshot(ch, { ok: false }, {});
+  const ex = snap.exposures;
+  assert.ok('charm_flip' in ex, 'charm_flip serialized (was computed but dropped before rubric v2)');
+  assert.ok('vanna_flip' in ex);
+  assert.ok(Number.isInteger(ex.net_vanna_1w_usd_per_volpt), 'front-week vanna net present');
+  assert.ok(Number.isInteger(ex.net_charm_1w_usd_per_day), 'front-week charm net present');
+  assert.ok(ex.top_strikes_by_gex.length > 0);
+  for (const row of ex.top_strikes_by_gex) {
+    assert.ok(Number.isInteger(row.net_vanna_usd), 'per-strike vanna on gamma top strikes');
+    assert.ok(Number.isInteger(row.net_charm_usd), 'per-strike charm on gamma top strikes');
+  }
+  assert.ok(ex.top_strikes_by_vanna.length > 0, 'vanna concentration list present');
+  for (const row of ex.top_strikes_by_vanna) {
+    assert.ok(isFinite(row.strike) && Number.isInteger(row.net_vanna_usd) && Number.isInteger(row.net_charm_usd));
+  }
+  // the vanna list is sorted by |vanna| descending
+  for (let i = 1; i < ex.top_strikes_by_vanna.length; i++) {
+    assert.ok(Math.abs(ex.top_strikes_by_vanna[i - 1].net_vanna_usd) >= Math.abs(ex.top_strikes_by_vanna[i].net_vanna_usd));
+  }
+});
+
 // ---------------------------------------------------------------- third-order greeks
 
 test('bsGreeks3: speed/color/zomma/vomma/ultima match finite differences of the lower greeks', () => {

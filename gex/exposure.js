@@ -429,10 +429,24 @@
     const all = computeMetrics(chain, 'all');
     const week = computeMetrics(chain, '7');
     const r2 = (v) => (v == null || !isFinite(v) ? null : Math.round(v * 100) / 100);
+    // per-strike rows carry gex AND vanna/charm — surface all three so the AI
+    // read can see WHERE vol-sensitivity and decay flow concentrate, not just
+    // the aggregate nets (a read that ignores the vanna/charm curves is blind
+    // to half the hedging mechanics)
     const topStrikes = [...all.strikes]
       .sort((a, b) => Math.abs(b.gex) - Math.abs(a.gex))
       .slice(0, 7)
-      .map((r) => ({ strike: r.strike, net_gex_usd: Math.round(r.gex), call_oi: r.callOi, put_oi: r.putOi }));
+      .map((r) => ({
+        strike: r.strike, net_gex_usd: Math.round(r.gex),
+        net_vanna_usd: Math.round(r.vanna), net_charm_usd: Math.round(r.charm),
+        call_oi: r.callOi, put_oi: r.putOi,
+      }));
+    // vanna concentration can sit at strikes that aren't gamma-heavy (far OTM
+    // hedges) — list the top-|vanna| strikes separately so they're never hidden
+    const topVanna = [...all.strikes]
+      .sort((a, b) => Math.abs(b.vanna) - Math.abs(a.vanna))
+      .slice(0, 5)
+      .map((r) => ({ strike: r.strike, net_vanna_usd: Math.round(r.vanna), net_charm_usd: Math.round(r.charm) }));
     return {
       kind: 'gex-dashboard-snapshot',
       symbol: chain.symbol,
@@ -444,11 +458,17 @@
         net_gex_1w_usd: Math.round(week.netGex),
         net_vanna_usd_per_volpt: Math.round(all.netVanna),
         net_charm_usd_per_day: Math.round(all.netCharm),
+        // near-dated (<=7 DTE) vanna/charm — decay flow concentrates in the
+        // front week, so the 1w slice is often the tradeable part of the signal
+        net_vanna_1w_usd_per_volpt: Math.round(week.netVanna),
+        net_charm_1w_usd_per_day: Math.round(week.netCharm),
         gamma_flip: r2(all.flip),
         vanna_flip: r2(all.vannaFlip),
+        charm_flip: r2(all.charmFlip),
         call_wall: all.callWall ? all.callWall.strike : null,
         put_wall: all.putWall ? all.putWall.strike : null,
         top_strikes_by_gex: topStrikes,
+        top_strikes_by_vanna: topVanna,
       },
       vol: volm && volm.ok ? {
         iv30_vix_style: r2(volm.vix30),

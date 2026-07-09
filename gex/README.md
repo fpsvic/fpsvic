@@ -1,15 +1,17 @@
 # Personal GEX
 
 A free, self-hosted gamma-exposure toolkit in the spirit of gexa.ai and gexbot.com —
-built for personal use with zero dependencies and zero data-feed cost. Three views:
+built for personal use with zero dependencies and zero data-feed cost. Three views,
+all cross-linked from a shared nav strip:
 
 - a **multi-ticker scanner** (`/`) that ranks a watchlist by how mispriced each name's
   implied vol is, so you can spot top-tier situations across many symbols at once,
-- the original **single-ticker dashboard** (`/index.html?symbol=SPX`) — dealer
+- the **single-ticker dashboard** (`/index.html?symbol=SPX`) — dealer
   gamma/vanna/charm exposure, walls, the zero-gamma flip, the VIX-style vol panel, and
-  the on-demand AI read — that each scanner row click-throughs into, and
-- the **brain view** (`/brain.html?symbol=SPX`) — a 3D mesh of the whole chain that
-  shows all four greeks at once, built for at-a-glance short-term-trading reads.
+  the on-demand AI read — that each scanner row click-throughs into (the
+  scanner → dashboard hop is the core decision flow), and
+- the **macro view** (`/macro.html`) — one gamma mini per watchlist ticker for
+  whole-tape triage; each card clicks through to that ticker's dashboard.
 
 ## Quick start
 
@@ -65,56 +67,27 @@ crosses the wire, and the snapshot serializes identically on both sides so the a
 cache is shared. `GEX_NO_LISTEN=1 node gex/scan.test.js` and `node gex/exposure.test.js`
 test the pipeline.
 
-## The brain view
+## The macro view
 
-`/brain.html?symbol=SPX` renders the whole chain as a 3D "brain": four nested dome
-shells — one per expiry band (0DTE / weekly / monthly / LEAP) — each a ring of strike
-nodes, drawn with plain Canvas 2D and a hand-rolled perspective projection (no WebGL,
-no libraries). It exists to answer one question at a glance: *where is the dealer book
-concentrated, and on which greek, right now?*
-
-- **Primary shape.** One greek (gamma by default; vanna/charm/delta selectable) deforms
-  the shells: positive exposure bulges a node outward (a *gyrus* — call-side,
-  dealer-stabilizing for gamma), negative folds it inward (a *sulcus*). Node size and
-  bulge are normalized against the single largest value in the whole mesh, so shell-to-
-  shell differences are honest: far-dated shells genuinely look quiet because they are.
-- **Synapses.** The other three greeks orbit every node as small satellites at fixed
-  angles: color says *which* greek (teal gamma, blue vanna, gold charm, pink delta),
-  filled vs hollow says sign, distance from the node says magnitude. All four greeks are
-  visible simultaneously — switching the primary just re-chooses which one drives the shape.
-- **Landmarks.** A violet spot beam cuts through every shell at the current price;
-  call/put walls get halo rings; the active greek's zero-crossing gets a pulsing flip
-  ring; and spot/walls/flip carry on-mesh price labels with collision avoidance (walls
-  merge into one label when they land on the same strike).
-- **Built for short-term trading.** The camera is static by default (drag to orbit,
-  scroll to zoom — it never drifts on its own), and *near-term focus* (default on) dims
-  the monthly/LEAP shells so 0DTE/weekly gamma dominates the read; one button restores
-  equal prominence.
-- **Data path.** `GET /api/brain?symbol=SYM` returns a strike × expiry-band grid of all
-  four greeks (`GexExposure.computeMeshBands`) plus the landmark levels, reusing the
-  exact chain fetch/cache/parse path as the dashboard — the numbers can never drift
-  between views. The response is memoized on the chain's cache TTL, and every fresh
-  build is archived to `gex/data/brain/` (`GEX_NO_ARCHIVE=1` disables). The page polls
-  every 20 s and pulses nodes whose exposure moved since the last poll.
-- **Playback.** The **HISTORY** button scrubs the archived snapshots: a bottom bar with
-  a day picker, a slider over every snapshot the archiver wrote that day, play/pause
-  stepping, and arrow-key stepping. While scrubbing, the pulse layer shows what changed
-  *between the two viewed moments* — "is the wall building or pulling?" answered by
-  dragging a slider. Greek chips and node tooltips work on the frozen snapshot; **LIVE**
-  returns to polling. Served by `/api/brain/history` (list) and `/api/brain/snapshot`
-  (immutable archived bodies).
-
-### The macro view
-
-`/macro.html` is the triage screen: one **mini-brain per watchlist ticker** (the
-watchlist is shared with the scanner — same localStorage list), each a simplified
+`/macro.html` is the triage screen: one **gamma mini per watchlist ticker** (the
+watchlist is shared with the scanner — same localStorage list), each a small dome
 render — static camera, gamma only, near-term emphasis baked in — that draws exactly
 once per sweep. Cards carry the regime at a glance (border + `DEALERS LONG γ` /
 `SHORT γ` chip on the sign of net GEX), spot, walls, and flip, plus a **mover badge**
-(Δ net GEX since the previous sweep, top-3 movers called out). Click any card for the
-full brain. Sweeps run every 60 s through a small request pool with `?prefer=cboe`,
-because CBOE answers a whole chain in one request per ticker — the same fan-out
-reasoning as the scanner.
+(Δ net GEX since the previous sweep, top-3 movers called out). Click any card for that
+ticker's dashboard. Sweeps run every 60 s through a small request pool with
+`?prefer=cboe`, because CBOE answers a whole chain in one request per ticker — the
+same fan-out reasoning as the scanner.
+
+Behind it, `GET /api/brain?symbol=SYM` returns a strike × expiry-band grid of the
+greeks (`GexExposure.computeMeshBands`) plus the landmark levels, reusing the exact
+chain fetch/cache/parse path as the dashboard — the numbers can never drift between
+views. The response is memoized on the chain's cache TTL, and every fresh build is
+archived to `gex/data/brain/` (`GEX_NO_ARCHIVE=1` disables; past days gzip in place
+overnight, `GEX_NO_COMPACT` opts out) — that archive is the intraday market-state
+record that saved AI reads can be scored against later. (The 3D "brain view" page
+this endpoint was originally built for has been retired — it made a clunky decision
+workflow next to scanner → dashboard; the archive and this endpoint live on.)
 
 **CBOE delayed quotes (default).** CBOE publishes this API for free:
 `https://cdn.cboe.com/api/global/delayed_quotes/options/_SPX.json` (indexes use a `_`
@@ -206,13 +179,21 @@ A per-strike table view backs every chart, and the whole thing supports dark mod
 ## The AI read
 
 The "AI read" card sends a compact JSON snapshot of everything the dashboard computed —
-exposures, walls, flips, the VIX proxy, term slope, smile, convexity verdict; numbers
-only, never screenshots — to `POST /api/analyze`, which calls Claude
-(`claude-opus-4-8` by default) with a fixed, versioned rubric and a forced JSON output
-schema. Consistency is the design goal: the rubric mechanically maps regimes to
-playbooks, the schema fixes the output shape, inputs are rounded so identical market
-states serialize identically, and responses are cached for 10 minutes on a hash of the
-snapshot. Same data in, same read out.
+exposures, walls, all three flips (gamma/vanna/charm), per-strike vanna/charm at the
+top strikes, the VIX proxy, term slope, smile, convexity verdict; numbers only, never
+screenshots — to `POST /api/analyze`, which calls Claude (`claude-opus-4-8` by
+default) with a fixed, versioned rubric and a forced JSON output schema. Consistency
+is the design goal: the rubric mechanically maps regimes to playbooks (with a
+dedicated vanna/charm-flows step and an explicit confidence-calibration scale so
+"high" is earned, not defaulted away from), the schema fixes the output shape, inputs
+are rounded so identical market states serialize identically, and responses are cached
+for 10 minutes on a hash of the snapshot. Same data in, same read out.
+
+Reads are **account-aware**: the server injects `GEX_ACCOUNT_SIZE` (default $2,500)
+into every snapshot, every proposed structure must carry an estimated max risk in
+dollars that fits that buying power with defined risk (no naked short options, ever),
+and structures that can't fit — a $10k straddle on a $1,000 underlying — are rejected
+in favor of ones that can, with the constraint noted in cautions.
 
 Setup: put `ANTHROPIC_API_KEY=...` in `gex/.env` (create a key at platform.claude.com)
 and restart the server. Each read costs roughly 1–3¢ at Opus pricing; `ANTHROPIC_MODEL`

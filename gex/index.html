@@ -49,6 +49,14 @@
   header.top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
   header.top h1 { font-size: 20px; font-weight: 650; margin: 0; }
   header.top .sub { color: var(--text-secondary); }
+  /* cross-page nav: every page reaches every other, current page marked */
+  .pagenav { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .pagenav a, .pagenav .here {
+    font-size: 12.5px; text-decoration: none; padding: 4px 12px; border-radius: 999px;
+    color: var(--text-secondary); border: 1px solid var(--border); background: var(--surface-1);
+  }
+  .pagenav a:hover { color: var(--text-primary); border-color: var(--accent); }
+  .pagenav .here { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 600; }
   #stamp { color: var(--text-muted); font-size: 12.5px; margin: 0 0 14px; }
 
   /* ---- filter row (one row, above everything it scopes) ---- */
@@ -171,6 +179,17 @@
   .aiinvalid b { color: var(--neg); font-weight: 600; }
   .aicautions { margin: 4px 0; padding-left: 20px; color: var(--text-secondary); font-size: 12.5px; }
   .aimeta { margin: 14px 0 0; color: var(--text-muted); font-size: 11.5px; }
+  /* saved-read journal under the AI card */
+  #aijournal .jhead { display: flex; align-items: baseline; gap: 10px; margin-top: 16px; }
+  #aijournal .jday { font-size: 11.5px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); border-radius: 6px; padding: 2px 6px; }
+  #aijournal .jrow {
+    display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; cursor: pointer;
+    background: none; border: none; border-top: 1px solid var(--grid); padding: 6px 2px; font: inherit;
+    color: var(--text-secondary); font-size: 12px;
+  }
+  #aijournal .jrow:hover { background: var(--mid); }
+  #aijournal .jtime { color: var(--text-muted); font-size: 11.5px; white-space: nowrap; }
+  #aijournal .jline { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   footer { margin-top: 24px; color: var(--text-muted); font-size: 12px; }
   .loading { opacity: 0.45; transition: opacity 0.15s; }
@@ -181,6 +200,11 @@
   <header class="top">
     <h1>Personal GEX</h1>
     <span class="sub">dealer gamma / vanna / charm exposure from free CBOE delayed data</span>
+    <nav class="pagenav" aria-label="Pages">
+      <a href="scan.html">Scanner</a>
+      <span class="here" aria-current="page">Dashboard</span>
+      <a href="macro.html">Macro</a>
+    </nav>
   </header>
   <p id="stamp">No data loaded yet.</p>
 
@@ -193,9 +217,6 @@
       <button class="chip" data-sym="QQQ">QQQ</button>
       <button class="chip" data-sym="IWM">IWM</button>
     </span>
-    <a class="btn" id="brainLink" href="brain.html?symbol=SPX"
-       onclick="this.href='brain.html?symbol='+encodeURIComponent(document.getElementById('symbol').value.trim().toUpperCase());"
-       title="3D gamma mesh view">🧠 Brain view</a>
     <span class="chipset" id="expchips" role="group" aria-label="Expiry filter">
       <span class="lbl">Expiries</span>
       <button class="chip" data-exp="0"  aria-pressed="false">0DTE</button>
@@ -236,9 +257,11 @@
           <button class="btn" id="aibtn">Generate read</button>
         </div>
         <p class="desc">Claude reads the computed exposures and vol metrics through a fixed rubric and returns
-          a structured market read with option-structure ideas — same data in, same read out. Ideas come with
-          explicit invalidation levels; nothing here is executed or sized. Educational only, not financial advice.</p>
+          a structured market read with option-structure ideas sized to fit the configured account — same data
+          in, same read out. Ideas come with explicit invalidation levels; nothing here is executed.
+          Every read is saved server-side and timestamped for later review. Educational only, not financial advice.</p>
         <div id="airead"></div>
+        <div id="aijournal"></div>
       </div>
     </div>
     <div class="col">

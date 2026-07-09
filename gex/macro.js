@@ -1,11 +1,11 @@
 'use strict';
 
-/* GEX Macro — the triage view: one mini-brain per watchlist ticker, so the
+/* GEX Macro — the triage view: one gamma mini per watchlist ticker, so the
  * whole tape's dealer-gamma picture reads at a glance before drilling into a
- * single symbol. Each card is a simplified brain (static camera, gamma only,
- * near-term emphasis baked in, no satellites/labels/interaction) that renders
- * EXACTLY ONCE per data arrival — there is no animation loop on this page at
- * all. Cards click through to the full brain view.
+ * single symbol. Each card is a small gamma-dome render (static camera, gamma
+ * only, near-term emphasis baked in, no satellites/labels/interaction) that
+ * renders EXACTLY ONCE per data arrival — there is no animation loop on this
+ * page at all. Cards click through to that ticker's dashboard.
  *
  * Data: GET /api/brain?symbol=X&prefer=cboe per ticker through a small
  * concurrency pool. CBOE-first deliberately (one request per ticker) — a
@@ -159,7 +159,8 @@
     root.className = 'card';
     root.addEventListener('click', function () {
       if (root.classList.contains('error')) return;
-      location.href = 'brain.html?symbol=' + encodeURIComponent(sym);
+      // straight into the productive flow: card -> full dashboard for that ticker
+      location.href = 'index.html?symbol=' + encodeURIComponent(sym);
     });
 
     var head = document.createElement('div');

@@ -635,7 +635,12 @@ async function requestAiRead() {
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-    if (seq === loadSeq) renderAiRead(out, json, snapshot);
+    if (seq === loadSeq) {
+      renderAiRead(out, json, snapshot);
+      // the archive write is fire-and-forget server-side — give the rename a
+      // beat to land before listing, or the just-generated read won't show
+      setTimeout(() => { if (seq === loadSeq) loadReadJournal(snapshot.symbol); }, 800);
+    }
   } catch (err) {
     if (seq === loadSeq) {
       out.replaceChildren(el('p', { className: 'desc', text: `AI read unavailable: ${err.message}` }));
@@ -698,6 +703,8 @@ function renderAiRead(container, { read, model, usage, asof }, snapshot) {
       head.append(el('span', { className: 'aichip', style: `color:${DIRECTION_STYLE[t.direction] || 'inherit'}`, text: t.direction.replace('_', ' ') }));
       head.append(el('span', { className: 'aichip', text: `${t.confidence} confidence` }));
       head.append(el('span', { className: 'aichip', text: t.timeframe }));
+      // rubric v2: every structure is costed against the configured account size
+      if (isFinite(t.est_max_risk_usd)) head.append(el('span', { className: 'aichip', text: `~$${fmtInt(Math.round(t.est_max_risk_usd))} max risk` }));
       box.append(head);
       box.append(el('p', { className: 'aistructure', text: t.structure }));
       if (t.entry_condition) {
@@ -726,6 +733,66 @@ function renderAiRead(container, { read, model, usage, asof }, snapshot) {
     className: 'aimeta',
     text: `${model} · ${fmtInt(usage.input)} in / ${fmtInt(usage.output)} out tokens · read generated ${new Date(asof).toLocaleString()} · snapshot: ${snapshot.symbol} @ ${fmtStrike(snapshot.spot)}`,
   }));
+}
+
+// ---------------------------------------------------------------- saved-read journal
+
+/* Every fresh read is archived server-side (input snapshot + output, timestamped).
+ * The journal lists this symbol's saved reads under the AI card — click one to
+ * restore it into the card without spending a credit. This is the review/backtest
+ * surface: "what did the read say at 10:04, and did the market respect it?" */
+let journalSeq = 0;
+
+async function loadReadJournal(sym, day) {
+  const out = $('#aijournal');
+  if (!out) return;
+  const seq = ++journalSeq;
+  try {
+    const q = `api/reads?symbol=${encodeURIComponent(sym)}${day ? `&day=${encodeURIComponent(day)}` : ''}`;
+    const res = await fetch(q);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = await res.json();
+    if (seq !== journalSeq) return; // superseded by a newer symbol/day switch
+    renderJournal(out, sym, j);
+  } catch {
+    if (seq === journalSeq) out.replaceChildren(); // journal is best-effort chrome, never an error banner
+  }
+}
+
+function renderJournal(out, sym, j) {
+  out.replaceChildren();
+  if (!j.day || !j.reads?.length) return; // nothing saved yet — take no space
+  const head = el('div', { className: 'jhead' }, [el('h3', { className: 'aihead', text: `Saved reads — ${sym}` })]);
+  if (j.days.length > 1) {
+    const sel = el('select', { className: 'jday', title: 'read journal day' });
+    for (const d of [...j.days].reverse()) sel.append(el('option', { value: d, text: d, selected: d === j.day }));
+    sel.addEventListener('change', () => loadReadJournal(sym, sel.value));
+    head.append(sel);
+  }
+  out.append(head);
+  for (const entry of [...j.reads].reverse()) { // newest first
+    const row = el('button', { className: 'jrow', type: 'button', title: 'restore this saved read' });
+    row.append(el('span', { className: 'jtime mono', text: entry.asof ? new Date(entry.asof).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—' }));
+    if (entry.regime) row.append(el('span', { className: 'aichip', text: REGIME_LABELS[entry.regime] || entry.regime }));
+    row.append(el('span', { className: 'jline', text: entry.one_liner || entry.file }));
+    row.addEventListener('click', () => restoreRead(sym, j.day, entry.file));
+    out.append(row);
+  }
+}
+
+async function restoreRead(sym, day, file) {
+  const out = $('#airead');
+  const seq = loadSeq; // a restore must not land over a newer symbol's dashboard
+  try {
+    const res = await fetch(`api/reads?symbol=${encodeURIComponent(sym)}&day=${encodeURIComponent(day)}&file=${encodeURIComponent(file)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rec = await res.json();
+    if (seq !== loadSeq) return; // symbol changed while fetching — drop it
+    renderAiRead(out, rec, rec.snapshot || { symbol: sym, spot: NaN });
+    out.prepend(el('p', { className: 'aimeta', text: `restored saved read from ${new Date(rec.asof).toLocaleString()} — the market has moved since` }));
+  } catch (err) {
+    if (seq === loadSeq) out.replaceChildren(el('p', { className: 'desc', text: `Could not restore that read: ${err.message}` }));
+  }
 }
 
 // ---------------------------------------------------------------- render all
@@ -875,9 +942,12 @@ async function loadSymbol(symRaw) {
     chain = parsed;
     history = aux.history;
     vixQuote = aux.vixQuote;
+    // keep the URL honest: reloads and cross-page nav land back on this ticker
+    try { window.history.replaceState(null, '', '?symbol=' + encodeURIComponent(sym)); } catch { /* file:// */ }
     $('#airead').replaceChildren(); // an old AI read does not describe the new chain
     computeVolMetrics();
     renderAll();
+    loadReadJournal(sym); // surface this symbol's saved reads (best-effort, non-blocking)
   } catch (err) {
     if (seq !== loadSeq) return;
     banner(`Could not load ${sym}: ${err.message}. ` +
@@ -961,6 +1031,8 @@ function loadDemo() {
   history = demoHistory(chain.spot);
   vixQuote = null;
   $('#airead').replaceChildren(); // an old AI read does not describe the new chain
+  journalSeq++; // drop any in-flight journal fetch too
+  $('#aijournal').replaceChildren(); // the previous symbol's saved reads don't describe demo data
   computeVolMetrics();
   renderAll();
 }

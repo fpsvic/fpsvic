@@ -16,9 +16,9 @@ const LS_KEY = 'gex.scan.watchlist';
 const POOL = 4;                 // concurrent /api/scan/row fetches
 const ROW_TIMEOUT = 30_000;     // per-row abort (a cold 13 MB index chain can take a few seconds)
 const MAX_WATCH = 40;
-const AI_TOP = 3;               // how many top picks to read
+const AI_TOP = 10;              // how many top picks to read
 const AI_MIN_CONFIDENCE = 0.6;  // don't spend Claude on thin reads
-const AI_POOL = 2;
+const AI_POOL = 3;              // concurrent /api/analyze calls (10 reads at pool 2 would crawl)
 
 const REGIME_LABELS = {
   pinned_range: 'Pinned range', drift_grind: 'Drift / grind', squeeze_risk: 'Squeeze risk',
@@ -195,6 +195,10 @@ function finishScan(seq, demo) {
   $('#stamp').textContent = `${scanned} of ${results.size} ranked · ${errs ? `${errs} error${errs > 1 ? 's' : ''} · ` : ''}${src} · as of ${new Date().toLocaleTimeString()}`;
   const anyRankable = [...results.values()].some((e) => e.row && e.row.rankable);
   $('#aibtn').disabled = aiBusy || !anyRankable;
+  // runScan/demoScan reset aiState, wiping the saved-read cards — restore them
+  // (rehydrateReads only fills symbols with no live entry, so it can never
+  // overwrite a read the user just generated)
+  rehydrateReads();
 }
 
 function sourceLabel() {
@@ -415,7 +419,9 @@ function renderSummary() {
 async function readTopPicks() {
   if (aiBusy) return;
   const picks = [...results.values()]
-    .filter((e) => e.row && e.row.rankable && (e.row.confidence ?? 0) >= AI_MIN_CONFIDENCE && e.row.snapshot)
+    // demo rows are excluded like rowTr's click-through: a synthetic ticker's
+    // read would spend real credits and archive a fake-market journal record
+    .filter((e) => e.row && e.row.rankable && e.row.source !== 'demo' && (e.row.confidence ?? 0) >= AI_MIN_CONFIDENCE && e.row.snapshot)
     .sort((a, b) => b.row.magnitude - a.row.magnitude)
     .slice(0, AI_TOP);
   const out = $('#aipicks');
@@ -423,7 +429,10 @@ async function readTopPicks() {
 
   const seq = scanSeq;
   aiBusy = true; $('#aibtn').disabled = true;
-  aiState = new Map(picks.map((p) => [p.symbol, { status: 'loading' }]));
+  // fresh picks lead the panel; saved reads for names outside this run keep
+  // their card (still labeled with their timestamp) instead of vanishing
+  const kept = [...aiState.entries()].filter(([sym, st]) => st.saved && !picks.some((p) => p.symbol === sym));
+  aiState = new Map([...picks.map((p) => [p.symbol, { status: 'loading' }]), ...kept]);
   renderPicks();
 
   let idx = 0;
@@ -432,7 +441,7 @@ async function readTopPicks() {
       const p = picks[idx++];
       const res = await fetchRead(p.row.snapshot);
       if (seq !== scanSeq) return;
-      aiState.set(p.symbol, res.error ? { status: 'error', error: res.error } : { status: 'done', read: res.read });
+      aiState.set(p.symbol, res.error ? { status: 'error', error: res.error } : { status: 'done', read: res.read, asof: res.asof });
       renderPicks();
     }
   };
@@ -446,10 +455,40 @@ async function fetchRead(snapshot) {
     const res = await fetch('api/analyze', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(snapshot) });
     const j = await res.json();
     if (!res.ok) return { error: j.error || `HTTP ${res.status}` };
-    return { read: j.read };
+    return { read: j.read, asof: j.asof };
   } catch (err) {
     return { error: err.message };
   }
+}
+
+// Saved reads survive navigation: every fresh read is archived server-side, so
+// on page load (and after a scan) the panel rehydrates each watchlist name's
+// most recent saved read — timestamped — instead of demanding a re-run. Never
+// overwrites an entry already in aiState (a fresh/loading read always wins).
+async function rehydrateReads() {
+  if (!watchlist.length) return;
+  try {
+    const res = await fetch('api/reads/latest?symbols=' + encodeURIComponent(watchlist.join(',')));
+    if (!res.ok) return;
+    const { reads } = await res.json();
+    let added = false;
+    for (const sym of watchlist) {
+      const rec = reads && reads[sym];
+      if (!rec || !rec.read || aiState.has(sym)) continue;
+      aiState.set(sym, { status: 'done', read: rec.read, asof: rec.asof, saved: true });
+      added = true;
+    }
+    if (added) renderPicks();
+  } catch { /* server down or no reads yet — the panel just stays empty */ }
+}
+
+function fmtAsof(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (!isFinite(d)) return '';
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return sameDay ? time : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
 }
 
 function renderPicks() {
@@ -461,7 +500,12 @@ function renderPicks() {
 function pickCard(sym, st) {
   const card = el('div', { className: 'aipick' });
   const head = el('div', { className: 'head' }, [el('span', { className: 'sym', text: sym })]);
-  if (st.status === 'done' && st.read) head.append(el('span', { className: 'aichip', text: REGIME_LABELS[st.read.regime.label] || st.read.regime.label }));
+  if (st.status === 'done' && st.read) {
+    head.append(el('span', { className: 'aichip', text: REGIME_LABELS[st.read.regime.label] || st.read.regime.label }));
+    // every read is timestamped; a rehydrated one says so — age is part of the signal
+    const when = fmtAsof(st.asof);
+    if (when) head.append(el('span', { className: 'aiwhen', text: st.saved ? `saved · ${when}` : when }));
+  }
   card.append(head);
   if (st.status === 'loading') { card.append(el('p', { className: 'desc', text: 'reading the book…' })); return card; }
   if (st.status === 'error') { card.append(el('p', { className: 'desc', text: `AI read unavailable: ${st.error}` })); return card; }
@@ -473,6 +517,11 @@ function pickCard(sym, st) {
     const p = el('p', { className: 'struct' });
     p.append(el('b', { text: `${t.name}: ` }));
     p.append(document.createTextNode(t.structure));
+    // rubric v2 sizes every structure to the account — surface the cost + conviction
+    const bits = [];
+    if (isFinite(t.est_max_risk_usd)) bits.push(`~$${Math.round(t.est_max_risk_usd)} max risk`);
+    if (t.confidence) bits.push(`${t.confidence} confidence`);
+    if (bits.length) p.append(el('span', { className: 'risk', text: ` · ${bits.join(' · ')}` }));
     card.append(p);
   }
   card.append(el('a', { className: 'more', href: `index.html?symbol=${encodeURIComponent(sym)}`, text: 'full read →' }));
@@ -601,3 +650,4 @@ if (typeof GexExposure === 'undefined' || typeof GexMetrics === 'undefined') {
   banner('Scanner failed to load its math modules (metrics.js / exposure.js). Reload the page.');
 }
 renderWatchlist();
+rehydrateReads(); // surface each watchlist name's last saved read without spending a credit
