@@ -72,10 +72,13 @@ test the pipeline.
 `/macro.html` is the triage screen: one **gamma mini per watchlist ticker** (the
 watchlist is shared with the scanner — same localStorage list), each a small dome
 render — static camera, gamma only, near-term emphasis baked in — that draws exactly
-once per sweep. Cards carry the regime at a glance (border + `DEALERS LONG γ` /
-`SHORT γ` chip on the sign of net GEX), spot, walls, and flip, plus a **mover badge**
-(Δ net GEX since the previous sweep, top-3 movers called out). Click any card for that
-ticker's dashboard. Sweeps run every 60 s through a small request pool with
+once per sweep. Under each dome sits the ticker's **~30d IV smile** (put wing left,
+call wing right, spot tick, a ±5% skew number) — gamma says *where* the book pins,
+the smile says *what vol is priced for*, and reading both per card is how setups pop
+at a glance. Cards carry the regime (border + `DEALERS LONG γ` / `SHORT γ` chip on
+the sign of net GEX), spot, walls, and flip, plus a **mover badge** (Δ net GEX since
+the previous sweep, top-3 movers called out). Click any card for that ticker's
+dashboard. Sweeps run every 60 s through a small request pool with
 `?prefer=cboe`, because CBOE answers a whole chain in one request per ticker — the
 same fan-out reasoning as the scanner.
 
@@ -139,6 +142,7 @@ gitignored, and real environment variables override it.
 | **Vanna profile / ladder** | Dollar delta dealers must re-hedge per +1 vol point — as a profile vs hypothetical spot (with its own flip) or by strike, toggle per card |
 | **Charm profile / ladder** | Dollar delta decay dealers must re-hedge per calendar day — same profile/ladder toggle |
 | **Volatility & convexity** | VIX-style 30-day implied vol (the "VIX proxy"), the implied-vol term structure with realized vol and the live VIX overlaid, vol risk premium, term slope, 25Δ butterfly & skew, and a labeled heuristic verdict: is convexity being **bid** or **offered**? |
+| **IV smile** | Implied vol by strike at the ~30d expiry (OTM quotes only — puts left of spot, calls right): the skew *shape* behind the fly/skew numbers, with spot, ATM and 25Δ wing markers |
 | **AI read** | On demand, Claude reads the computed snapshot through a fixed rubric and returns a structured market read: regime label, key levels, if/then scenarios, and 2–4 option structures each with an explicit invalidation level and confidence. Requires an `ANTHROPIC_API_KEY` |
 | **Stat tiles** | Spot, net GEX, zero-gamma level, walls, gamma regime, VIX proxy (vs the real VIX), vol premium, and the convexity read |
 | **Expiry filters** | 0DTE / ≤1 week / ≤1 month / all — the exposure charts re-compute against the slice; the volatility panel is fixed-horizon and ignores it |
@@ -182,8 +186,9 @@ A per-strike table view backs every chart, and the whole thing supports dark mod
 
 The "AI read" card sends a compact JSON snapshot of everything the dashboard computed —
 exposures, walls, all three flips (gamma/vanna/charm), per-strike vanna/charm at the
-top strikes, the VIX proxy, term slope, smile, convexity verdict; numbers only, never
-screenshots — to `POST /api/analyze`, which calls Claude (`claude-opus-4-8` by
+top strikes, the VIX proxy, term slope, the smile *shape* (ATM, 25Δ and 10Δ wing IVs,
+so skew is read from the curve rather than one risk-reversal number), convexity
+verdict; numbers only, never screenshots — to `POST /api/analyze`, which calls Claude (`claude-opus-4-8` by
 default) with a fixed, versioned rubric and a forced JSON output schema. Consistency
 is the design goal: the rubric mechanically maps regimes to playbooks (with a
 dedicated vanna/charm-flows step and an explicit confidence-calibration scale so

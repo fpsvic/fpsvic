@@ -231,7 +231,7 @@
     const atmIvs = quoted.filter((o) => o.strike === atmK).map((o) => o.iv);
     const atm = atmIvs.reduce((a, b) => a + b, 0) / atmIvs.length;
 
-    const wingIv = (type) => {
+    const wingIv = (type, target = 0.25) => {
       // OTM side only, sorted moving away from the money so |delta| falls toward 0
       const side = quoted
         .filter((o) => o.type === type && (type === 'C' ? o.strike >= F : o.strike <= F))
@@ -239,8 +239,8 @@
         .map((o) => ({ d: Math.abs(bsDelta(S, o.strike, T, o.iv, r, type)), iv: o.iv }));
       for (let i = 1; i < side.length; i++) {
         const a = side[i - 1], b = side[i];
-        if ((a.d - 0.25) * (b.d - 0.25) <= 0 && a.d !== b.d) {
-          return a.iv + (b.iv - a.iv) * ((a.d - 0.25) / (a.d - b.d));
+        if ((a.d - target) * (b.d - target) <= 0 && a.d !== b.d) {
+          return a.iv + (b.iv - a.iv) * ((a.d - target) / (a.d - b.d));
         }
       }
       return NaN;
@@ -248,9 +248,14 @@
 
     const c25 = wingIv('C'), p25 = wingIv('P');
     if (!isFinite(c25) || !isFinite(p25)) return { ok: false, reason: 'smile too sparse for 25-delta wings' };
+    // 10-delta tails are optional shape context — sparse chains often can't
+    // reach them, and the 25d smile stays fully usable without them
+    const c10 = wingIv('C', 0.10), p10 = wingIv('P', 0.10);
     return {
       ok: true,
       atm: 100 * atm, call25: 100 * c25, put25: 100 * p25,
+      call10: isFinite(c10) ? 100 * c10 : null,
+      put10: isFinite(p10) ? 100 * p10 : null,
       fly: 100 * ((p25 + c25) / 2 - atm),
       rr: 100 * (p25 - c25),
     };

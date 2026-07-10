@@ -367,6 +367,90 @@ test('buildSnapshot carries the vanna/charm picture: flips, 1w nets, per-strike 
   }
 });
 
+// ---------------------------------------------------------------- iv smile curve
+
+test('smileCurve: flat chain -> flat curve at the expiry nearest the target', () => {
+  const ch = E.parseCboe(flatCboe({ S: 100, sigma: 0.2, dtes: [20, 40] }), 'TEST', NOW);
+  const sc = E.smileCurve(ch, { targetDays: 30 });
+  assert.ok(sc.ok, sc.reason);
+  assert.ok(sc.days >= 18 && sc.days <= 42, `picked a near-target expiry (${sc.days}d)`);
+  assert.ok(sc.points.length >= 8);
+  for (let i = 1; i < sc.points.length; i++) assert.ok(sc.points[i].k > sc.points[i - 1].k, 'strikes ascending');
+  for (const p of sc.points) approx(p.iv, 20, 0.5, `flat 20-vol chain stays ~20 at K=${p.k}`);
+  // OTM-only construction: the window spans both sides of spot
+  assert.ok(sc.points[0].k < 100 && sc.points[sc.points.length - 1].k > 100, 'both wings present');
+});
+
+test('smileCurve: a put-skewed chain shows the skew shape; downsampling keeps the wing ends', () => {
+  // hand-skew the synthetic quotes: iv rises linearly below spot (put skew)
+  const payload = flatCboe({ S: 100, sigma: 0.2, dtes: [30], step: 1 });
+  for (const o of payload.data.options) {
+    const K = Number(o.option.slice(-8)) / 1000;
+    if (K < 100) o.iv = 0.2 + (100 - K) * 0.004; // +0.4 vol pt per point below spot
+  }
+  const ch = E.parseCboe(payload, 'TEST', NOW);
+  const sc = E.smileCurve(ch, { targetDays: 30, maxPoints: 12 });
+  assert.ok(sc.ok, sc.reason);
+  assert.equal(sc.points.length, 12, 'downsampled to maxPoints');
+  const low = sc.points[0], high = sc.points[sc.points.length - 1];
+  assert.ok(low.iv > high.iv + 2, `put wing above call wing (${low.iv.toFixed(1)} vs ${high.iv.toFixed(1)})`);
+  // wing ends survive downsampling: the lowest/highest in-window strikes remain
+  assert.ok(low.k <= 87 && high.k >= 113, `wing ends kept (${low.k}..${high.k})`);
+});
+
+test('smileCurve: a rogue junk-IV quote is rejected instead of blowing the scale', () => {
+  // one deep put quoted at 1000% vol (a real Tradier/ORATS artifact seen live)
+  const payload = flatCboe({ S: 100, sigma: 0.2, dtes: [30], step: 1 });
+  for (const o of payload.data.options) {
+    const K = Number(o.option.slice(-8)) / 1000;
+    if (K === 86 && o.option.includes('P')) o.iv = 10; // 1000 vol pts
+  }
+  const ch = E.parseCboe(payload, 'TEST', NOW);
+  const sc = E.smileCurve(ch, { targetDays: 30 });
+  assert.ok(sc.ok, sc.reason);
+  const maxIv = Math.max(...sc.points.map((p) => p.iv));
+  assert.ok(maxIv < 30, `junk quote filtered (max iv ${maxIv.toFixed(1)}, curve stays ~20)`);
+  // but a genuinely steep tail (2x the body) SURVIVES the filter
+  const payload2 = flatCboe({ S: 100, sigma: 0.2, dtes: [30], step: 1 });
+  for (const o of payload2.data.options) {
+    const K = Number(o.option.slice(-8)) / 1000;
+    if (K <= 90 && o.option.includes('P')) o.iv = 0.4; // real fat tail, 2x body
+  }
+  const sc2 = E.smileCurve(E.parseCboe(payload2, 'TEST', NOW), { targetDays: 30 });
+  assert.ok(sc2.ok && Math.max(...sc2.points.map((p) => p.iv)) > 35, 'a real 2x tail is kept');
+});
+
+test('smileCurve: a one-sided chain is refused, not rendered as a fake smile', () => {
+  // kill every call quote: a smile with no call wing is not a smile
+  const payload = flatCboe({ S: 100, sigma: 0.2, dtes: [30], step: 1 });
+  for (const o of payload.data.options) {
+    if (/C\d{8}$/.test(o.option)) o.iv = 0; // unusable call IVs
+  }
+  const sc = E.smileCurve(E.parseCboe(payload, 'TEST', NOW), { targetDays: 30 });
+  assert.equal(sc.ok, false, 'one-sided curve refused');
+  assert.ok(/one-sided/.test(sc.reason), sc.reason);
+});
+
+test('smileAtExpiry: 10-delta tails ride along and stay null-safe on sparse chains', () => {
+  const ch = E.parseCboe(flatCboe({ S: 100, sigma: 0.25, dtes: [30], step: 1 }), 'TEST', NOW);
+  const volm = E.buildVolMetrics(ch, Array(40).fill(100), M);
+  assert.ok(volm.ok && volm.smile, 'smile computed');
+  // the snapshot serializes the shape (null-safe when the smile is absent)
+  const snap = E.buildSnapshot(ch, volm, {});
+  assert.ok(isFinite(snap.vol.smile_atm_iv), 'atm iv in the snapshot');
+  assert.ok(isFinite(snap.vol.smile_put25_iv) && isFinite(snap.vol.smile_call25_iv), '25d wings in the snapshot');
+  assert.ok(!('smile_put10_iv' in snap.vol) || snap.vol.smile_put10_iv == null || isFinite(snap.vol.smile_put10_iv));
+  const bare = E.buildSnapshot(ch, { ok: false }, {});
+  assert.equal(bare.vol, null, 'vol block stays null-safe');
+  assert.ok(volm.smile.put10 == null || isFinite(volm.smile.put10), 'put10 is null or finite');
+  assert.ok(volm.smile.call10 == null || isFinite(volm.smile.call10), 'call10 is null or finite');
+  if (volm.smile.put10 != null && volm.smile.call10 != null) {
+    // flat surface: the tails sit at the same vol as the body
+    approx(volm.smile.put10, 25, 1, 'flat chain 10d put tail ~25');
+    approx(volm.smile.call10, 25, 1, 'flat chain 10d call tail ~25');
+  }
+});
+
 test('buildSnapshot tradeability hints: strike grid step and real listed expiries', () => {
   const ch = E.parseCboe(flatCboe({ S: 100, lo: 60, hi: 140, step: 1 }), 'TEST', NOW);
   const snap = E.buildSnapshot(ch, { ok: false }, {});

@@ -179,6 +179,14 @@
 
     var canvas = document.createElement('canvas');
 
+    // the skew shape right under the dome: gamma says WHERE the book pins,
+    // the smile says WHAT vol is priced for — together a setup reads at a glance
+    var smileCap = document.createElement('div');
+    smileCap.className = 'smilecap';
+    smileCap.textContent = '';
+    var smileCanvas = document.createElement('canvas');
+    smileCanvas.className = 'smile';
+
     var stats = document.createElement('div');
     stats.className = 'stats';
 
@@ -186,9 +194,9 @@
     mover.className = 'mover';
     mover.textContent = '';
 
-    root.append(head, spotEl, canvas, stats, mover);
+    root.append(head, spotEl, canvas, smileCap, smileCanvas, stats, mover);
     grid.append(root);
-    return { root: root, canvas: canvas, regime: regime, spot: spotEl, stats: stats, mover: mover };
+    return { root: root, canvas: canvas, smileCap: smileCap, smileCanvas: smileCanvas, regime: regime, spot: spotEl, stats: stats, mover: mover };
   }
 
   function renderCard(sym, payload) {
@@ -216,8 +224,98 @@
       card.stats.append(span);
     });
 
+    drawSmile(card, payload);
     drawMini(card.canvas, payload);
     return lm.netGex;
+  }
+
+  // ---------------------------------------------------------------- smile sparkline
+
+  /* The ~30d IV smile from the payload: put wing left, call wing right, a spot
+   * tick, wings tinted by side. The caption carries a ±5% skew number (put-side
+   * IV minus call-side IV at ~5% from spot) — positive = downside protection
+   * bid (put color), negative = upside demand (call color). */
+  // nearest point to strike k, but ONLY if it's genuinely near (within
+  // maxDistPct of spot) — a sparse wing must not let a far point masquerade
+  // as "the IV at ±5%" (the number would be measured at the wrong moneyness)
+  function ivNear(points, k, spot, maxDistPct) {
+    var best = null, bestD = Infinity;
+    for (var i = 0; i < points.length; i++) {
+      var d = Math.abs(points[i].k - k);
+      if (d < bestD) { bestD = d; best = points[i]; }
+    }
+    if (!best || bestD / spot * 100 > maxDistPct) return null;
+    return best;
+  }
+
+  function drawSmile(card, payload) {
+    var sm = payload.smile, spot = payload.spot;
+    if (!sm || !sm.points || sm.points.length < 4) {
+      card.smileCap.replaceChildren(document.createTextNode('smile — (chain too sparse)'));
+      var g0 = card.smileCanvas.getContext('2d');
+      g0.clearRect(0, 0, card.smileCanvas.width, card.smileCanvas.height);
+      return;
+    }
+    var pts = sm.points;
+
+    // caption: tenor + the ±5% skew read — only when both lookups landed near
+    // their targets AND on their own side of spot (a one-sided or gappy wing
+    // must omit the number, not fabricate it from the wrong moneyness)
+    var pPt = ivNear(pts, spot * 0.95, spot, 1.5), cPt = ivNear(pts, spot * 1.05, spot, 1.5);
+    card.smileCap.replaceChildren();
+    var left = document.createElement('span');
+    left.textContent = 'iv smile ~' + sm.days + 'd';
+    var right = document.createElement('span');
+    if (pPt && cPt && pPt.k < spot && cPt.k > spot) {
+      var skew = pPt.iv - cPt.iv;
+      var b = document.createElement('b');
+      b.className = skew >= 0 ? 'skpos' : 'skneg';
+      b.textContent = (skew >= 0 ? '+' : '') + skew.toFixed(1);
+      right.append(document.createTextNode('skew ±5% '), b);
+    }
+    card.smileCap.append(left, right);
+
+    var dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    var canvas = card.smileCanvas;
+    var cssW = canvas.clientWidth || 280, cssH = canvas.clientHeight || 34;
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
+    var g = canvas.getContext('2d');
+    g.clearRect(0, 0, canvas.width, canvas.height);
+
+    var kLo = pts[0].k, kHi = pts[pts.length - 1].k;
+    var ivLo = Infinity, ivHi = -Infinity;
+    pts.forEach(function (p) { ivLo = Math.min(ivLo, p.iv); ivHi = Math.max(ivHi, p.iv); });
+    if (ivHi - ivLo < 0.5) { var mid = (ivHi + ivLo) / 2; ivLo = mid - 0.25; ivHi = mid + 0.25; } // flat smile: keep the line visible mid-canvas
+    var padY = 3 * dpr;
+    var X = function (k) { return (k - kLo) / (kHi - kLo) * canvas.width; };
+    var Y = function (iv) { return padY + (1 - (iv - ivLo) / (ivHi - ivLo)) * (canvas.height - 2 * padY); };
+
+    // spot tick behind the curve
+    if (spot > kLo && spot < kHi) {
+      g.strokeStyle = 'rgba(198,143,255,0.55)'; // --spot
+      g.lineWidth = 1 * dpr;
+      g.beginPath();
+      g.moveTo(X(spot), 0);
+      g.lineTo(X(spot), canvas.height);
+      g.stroke();
+    }
+    // the curve: put wing in put color fading through neutral to call color —
+    // the neutral stop sits at SPOT's x-position, not the canvas midpoint (the
+    // strike window is routinely asymmetric around spot)
+    var spotFrac = Math.max(0.1, Math.min(0.9, (spot - kLo) / (kHi - kLo)));
+    var grad = g.createLinearGradient(0, 0, canvas.width, 0);
+    grad.addColorStop(0, 'rgba(255,122,82,0.9)');        // --put wing
+    grad.addColorStop(spotFrac, 'rgba(230,236,242,0.85)'); // body at the money
+    grad.addColorStop(1, 'rgba(53,214,176,0.9)');        // --call wing
+    g.strokeStyle = grad;
+    g.lineWidth = 1.6 * dpr;
+    g.lineJoin = 'round';
+    g.beginPath();
+    pts.forEach(function (p, i) {
+      if (i === 0) g.moveTo(X(p.k), Y(p.iv)); else g.lineTo(X(p.k), Y(p.iv));
+    });
+    g.stroke();
   }
 
   function renderError(sym, msg) {
@@ -374,7 +472,10 @@
   function redrawAll() {
     Object.keys(cards).forEach(function (sym) {
       var card = cards[sym];
-      if (card.lastPayload) drawMini(card.canvas, card.lastPayload);
+      if (card.lastPayload) {
+        drawMini(card.canvas, card.lastPayload);
+        drawSmile(card, card.lastPayload); // the smile raster tracks the same CSS box
+      }
     });
   }
   var resizeTimer = null;

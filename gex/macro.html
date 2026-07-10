@@ -110,6 +110,15 @@
   .card .spot b{ color:var(--spot); font-weight:600; }
 
   .card canvas{ display:block; width:100%; height:150px; margin:6px 0 4px; }
+  /* the ~30d skew shape under the gamma dome: put wing left, call wing right */
+  .card canvas.smile{ height:34px; margin:0 0 4px; }
+  .card .smilecap{
+    display:flex; justify-content:space-between; font-size:10px; color:var(--faint);
+    margin:0 0 2px; letter-spacing:0.04em;
+  }
+  .card .smilecap b{ font-weight:600; }
+  .card .smilecap .skpos{ color:var(--put); }   /* put skew = downside protection bid */
+  .card .smilecap .skneg{ color:var(--call); }  /* call skew = upside demand */
 
   .card .stats{
     display:flex; justify-content:space-between; gap:6px;

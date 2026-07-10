@@ -414,6 +414,75 @@
     };
   }
 
+  // ---------------------------------------------------------------- iv smile curve
+
+  /* Full IV-vs-strike smile at the usable expiry nearest targetDays, built from
+   * OTM quotes only (puts below spot, calls above — the liquid side of every
+   * strike, the standard smile construction). This is the SHAPE the wings
+   * summarize: smileAtExpiry gives 25d/10d points, this gives the whole curve
+   * for rendering. Pure given `chain`; no metrics.js dependency.
+   * Returns { ok:false, reason } or
+   *   { ok:true, days, spot, points: [{ k, iv }] } with iv in vol points,
+   *   points sorted by strike, downsampled evenly but always keeping both
+   *   wing ends (the tails are the point of a smile chart). */
+  function smileCurve(chain, { targetDays = 30, rangePct = 0.15, maxPoints = 36, minQuotes = 8 } = {}) {
+    if (!chain || !chain.options || !chain.options.length) return { ok: false, reason: 'no chain' };
+    const S = chain.spot;
+    const lo = S * (1 - rangePct), hi = S * (1 + rangePct);
+    // candidate expiries: same expiry+root series (mixing settlement series
+    // would kink the curve), OTM side only, usable IV, near-the-money window
+    const byExp = new Map();
+    for (const o of chain.options) {
+      if (!(o.iv > 0.005) || o.strike < lo || o.strike > hi) continue;
+      if (o.type === 'P' ? o.strike > S : o.strike < S) continue; // OTM side only
+      const key = `${o.expiry}|${o.root || ''}`;
+      let arr = byExp.get(key);
+      if (!arr) byExp.set(key, arr = []);
+      arr.push(o);
+    }
+    let best = null;
+    for (const arr of byExp.values()) {
+      if (arr.length < minQuotes) continue;
+      const days = arr[0].dte;
+      if (!best || Math.abs(days - targetDays) < Math.abs(best.days - targetDays)) best = { days, arr };
+    }
+    if (!best) return { ok: false, reason: 'no expiry with enough OTM quotes' };
+    // one point per strike (average the rare duplicate quote), sorted
+    const byK = new Map();
+    for (const o of best.arr) {
+      const cur = byK.get(o.strike) || { sum: 0, n: 0 };
+      cur.sum += o.iv; cur.n++;
+      byK.set(o.strike, cur);
+    }
+    let points = [...byK.entries()]
+      .map(([k, v]) => ({ k, iv: 100 * (v.sum / v.n) }))
+      .sort((a, b) => a.k - b.k);
+    // junk-quote rejection: a single rogue IV (Tradier/ORATS occasionally quotes
+    // a deep strike at several HUNDRED vol) would blow the y-scale and flatten
+    // the real curve to a line. Points beyond 4x / below 1/4 of the curve's
+    // median are feed noise, not smile — a genuinely steep tail (~2x median)
+    // survives comfortably.
+    if (points.length >= 4) {
+      const sortedIv = points.map((p) => p.iv).sort((a, b) => a - b);
+      const med = sortedIv[Math.floor(sortedIv.length / 2)];
+      if (med > 0) points = points.filter((p) => p.iv <= 4 * med && p.iv >= med / 4);
+    }
+    if (points.length < minQuotes) return { ok: false, reason: 'too few sane quotes after outlier rejection' };
+    // a smile needs BOTH wings: a one-sided curve (calls with dead IV on a
+    // beaten-down name, say) would render put-only data with call-wing colors
+    // and fabricate a two-sided skew number — refuse it honestly instead
+    const below = points.filter((p) => p.k < S).length;
+    const above = points.filter((p) => p.k > S).length;
+    if (below < 3 || above < 3) return { ok: false, reason: 'one-sided chain — smile needs both wings' };
+    if (points.length > maxPoints) {
+      const step = (points.length - 1) / (maxPoints - 1);
+      const picked = [];
+      for (let i = 0; i < maxPoints; i++) picked.push(points[Math.round(i * step)]);
+      points = picked; // endpoints survive by construction (i=0 and i=maxPoints-1)
+    }
+    return { ok: true, days: Math.round(best.days), spot: S, points };
+  }
+
   // ---------------------------------------------------------------- ai-read snapshot
 
   /* Compact numeric snapshot of everything the dashboard computed — the AI read's
@@ -503,6 +572,15 @@
         // the expiry the smile was actually measured at — sparse chains can push
         // it far from 30d, and 30d-calibrated fly/skew thresholds don't transfer
         smile_days: volm.smile ? Math.round(volm.smile.days) : null,
+        // the smile SHAPE, not just its summary stats: the wing IVs let the
+        // read see where skew steepens (body vs 25d vs 10d tail) instead of
+        // inferring shape from one rr number; 10d tails are null on chains too
+        // sparse to reach them
+        smile_atm_iv: volm.smile ? r2(volm.smile.atm) : null,
+        smile_put25_iv: volm.smile ? r2(volm.smile.put25) : null,
+        smile_call25_iv: volm.smile ? r2(volm.smile.call25) : null,
+        smile_put10_iv: volm.smile && volm.smile.put10 != null ? r2(volm.smile.put10) : null,
+        smile_call10_iv: volm.smile && volm.smile.call10 != null ? r2(volm.smile.call10) : null,
         term_structure: volm.term.filter((t) => t.days <= 130)
           .map((t) => ({ days: Math.round(t.days), iv: r2(t.iv) })),
         convexity_verdict: volm.read ? volm.read.verdict : null,
@@ -590,7 +668,7 @@
   const GexExposure = {
     RISK_FREE, CONTRACT_SIZE, PROFILE_POINTS, PROFILE_RANGE, MS_YEAR,
     normPdf, bsGreeks, bsGreeks3, parseCboe, optionGreeks, dealerSign, computeMetrics, zeroCrossing,
-    buildVolMetrics, buildSnapshot, scanRowFromChain,
+    buildVolMetrics, buildSnapshot, scanRowFromChain, smileCurve,
     DEFAULT_MESH_BANDS, computeMeshBands, computeBandLandmarks, nyCloseUtc,
   };
   root.GexExposure = GexExposure;

@@ -546,6 +546,77 @@ function volRows() {
   return rows;
 }
 
+/* IV smile: implied vol by strike at the ~30d expiry, from the same OTM-only
+ * construction the VIX proxy uses. Put wing left of spot, call wing right; the
+ * 25Δ/ATM markers from volm.smile anchor the fly/skew numbers to the shape. */
+function renderSmileChart() {
+  const container = $('#smilechart');
+  if (!container) return;
+  container.replaceChildren();
+  const daysEl = $('#smiledays');
+  if (daysEl) daysEl.textContent = '';
+  // target the SAME tenor the vol panel measured its 25Δ stats at, so the
+  // ATM/wing markers below annotate the curve they belong to (the two expiry
+  // pickers use different day measures and can otherwise straddle 30d apart)
+  const target = volm?.smile?.days ?? 30;
+  const sc = chain ? GexExposure.smileCurve(chain, { targetDays: target }) : { ok: false, reason: 'no chain loaded' };
+  if (!sc.ok || sc.points.length < 4) {
+    container.append(el('p', { className: 'desc', text: `Smile unavailable: ${sc.reason || 'too few OTM quotes at one expiry'}.` }));
+    return;
+  }
+  if (daysEl) daysEl.textContent = `~${sc.days}d expiry`;
+  const pts = sc.points;
+
+  const W = 640, H = 210, mL = 40, mR = 74, mT = 14, mB = 30;
+  const kMin = pts[0].k, kMax = pts[pts.length - 1].k;
+  let yMin = Math.min(...pts.map((p) => p.iv)), yMax = Math.max(...pts.map((p) => p.iv));
+  const pad = (yMax - yMin) * 0.12 || 1;
+  yMin = Math.max(0, yMin - pad); yMax += pad;
+  const X = (k) => mL + ((k - kMin) / (kMax - kMin)) * (W - mL - mR);
+  const Y = (v) => mT + ((yMax - v) / (yMax - yMin)) * (H - mT - mB);
+
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Implied vol smile by strike' });
+
+  const yStep = niceNum((yMax - yMin) / 4);
+  for (let v = Math.ceil(yMin / yStep) * yStep; v <= yMax; v += yStep) {
+    svg.append(svgEl('line', { x1: mL, y1: Y(v), x2: W - mR, y2: Y(v), stroke: 'var(--grid)', 'stroke-width': 1 }));
+    svg.append(svgEl('text', { x: mL - 6, y: Y(v) + 3.5, 'text-anchor': 'end', class: 'tick', text: yStep < 1 ? v.toFixed(1) : v.toFixed(0) }));
+  }
+  const xStep = niceNum((kMax - kMin) / 5);
+  for (let k = Math.ceil(kMin / xStep) * xStep; k <= kMax; k += xStep) {
+    svg.append(svgEl('text', { x: X(k), y: H - mB + 15, 'text-anchor': 'middle', class: 'tick', text: fmtStrike(k) }));
+  }
+
+  // spot hairline: everything left is the put wing, right the call wing
+  if (chain.spot > kMin && chain.spot < kMax) {
+    svg.append(svgEl('line', { x1: X(chain.spot), y1: mT, x2: X(chain.spot), y2: H - mB, stroke: 'var(--text-muted)', 'stroke-width': 1, 'stroke-dasharray': '3 3' }));
+    svg.append(svgEl('text', { x: X(chain.spot) + 4, y: mT + 9, class: 'anno', text: `spot ${fmtStrike(chain.spot)}` }));
+  }
+
+  // the curve, wing dots tinted by side
+  const d = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.k).toFixed(1)},${Y(p.iv).toFixed(1)}`).join('');
+  svg.append(svgEl('path', { d, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  svg.append(svgEl('circle', { cx: X(pts[0].k), cy: Y(pts[0].iv), r: 3, fill: 'var(--neg)' }));
+  svg.append(svgEl('circle', { cx: X(pts[pts.length - 1].k), cy: Y(pts[pts.length - 1].iv), r: 3, fill: 'var(--pos)' }));
+
+  // wing/ATM markers from the 25Δ smile stats (when the vol panel computed them
+  // at the same tenor) — direct-labeled in the right margin like the RV line
+  if (volm?.smile && Math.abs(volm.smile.days - sc.days) < 3) {
+    const marks = [
+      { v: volm.smile.atm, label: `ATM ${volm.smile.atm.toFixed(1)}` },
+      { v: volm.smile.put25, label: `25Δp ${volm.smile.put25.toFixed(1)}` },
+      { v: volm.smile.call25, label: `25Δc ${volm.smile.call25.toFixed(1)}` },
+    ];
+    for (const m of marks) {
+      if (m.v < yMin || m.v > yMax) continue;
+      svg.append(svgEl('line', { x1: W - mR - 8, y1: Y(m.v), x2: W - mR, y2: Y(m.v), stroke: 'var(--text-muted)', 'stroke-width': 1.5 }));
+      svg.append(svgEl('text', { x: W - mR + 5, y: Y(m.v) + 3.5, class: 'anno', text: m.label }));
+    }
+  }
+
+  container.append(svg);
+}
+
 function renderVolCard() {
   const legend = $('#termlegend');
   const term = $('#term');
@@ -824,6 +895,7 @@ function renderAll() {
   renderGreek('vanna');
   renderGreek('charm');
   renderVolCard();
+  renderSmileChart();
   renderTable(metrics);
 }
 

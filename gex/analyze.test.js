@@ -169,6 +169,20 @@ test('rubric v3: walls are regime-conditional, vol thresholds normalized, playbo
   assert.ok(!sys.includes('financed by a call sale at the call wall;'), 'old naked-call phrasing gone');
 });
 
+test('rubric v5: smile shape is read from the curve, tail pricing directions correct, tails stay honest', () => {
+  const sys = buildAnalyzeRequest(SNAPSHOT).system;
+  assert.ok(sys.includes('SMILE SHAPE'), 'dedicated smile-shape bullet');
+  assert.ok(sys.includes('smile_put10_iv') && sys.includes('smile_call25_iv'), 'wing fields named');
+  // the quant review proved these directions with Black-Scholes: a steep tail
+  // CHEAPENS spreads that sell it and RICHENS structures that buy it
+  assert.ok(sys.includes('SELL the inflated tail (buy the 25d put, sell the 10d put) get CHEAPER'), 'tail-selling spreads cheapen');
+  assert.ok(sys.includes('BUY the tail') && sys.includes('pay up'), 'tail-buying structures richen');
+  assert.ok(sys.includes('Selling the tail NAKED is never allowed'), 'tail demand never answered with undefined risk');
+  assert.ok(sys.includes('call25 above put25'), 'inverted skew defined via rr, not the fly-confounded call25>atm');
+  assert.ok(!sys.includes('put BUTTERFLIES cheapen'), 'the inverted v5 sentence is gone');
+  assert.ok(sys.includes('Tail fields are null on sparse chains'), 'sparse-tail honesty');
+});
+
 test('rubric v3: risk math spelled out, account cap absolute, staleness + OI honesty present', () => {
   const sys = buildAnalyzeRequest(SNAPSHOT).system;
   assert.ok(sys.includes('Credit spread: (width - credit received) x 100'), 'credit-spread max-loss formula stated');
