@@ -447,6 +447,22 @@
       .sort((a, b) => Math.abs(b.vanna) - Math.abs(a.vanna))
       .slice(0, 5)
       .map((r) => ({ strike: r.strike, net_vanna_usd: Math.round(r.vanna), net_charm_usd: Math.round(r.charm) }));
+    // tradeability hints for the AI read: without these the model can only name
+    // the handful of top-strike levels, which structurally forces WIDE spreads
+    // (quant review: a 5-wide SPX spread fits a small account where the 25-wide
+    // between two walls does not). strike_increment = the local listed grid step
+    // near spot; listed_dte = real expiries to anchor legs/timeframes to.
+    const nearStrikes = all.strikes.map((r) => r.strike)
+      .filter((k) => Math.abs(k - chain.spot) / chain.spot <= 0.05)
+      .sort((a, b) => a - b);
+    const gaps = [];
+    for (let i = 1; i < nearStrikes.length; i++) {
+      const g = +(nearStrikes[i] - nearStrikes[i - 1]).toFixed(4);
+      if (g > 0) gaps.push(g);
+    }
+    gaps.sort((a, b) => a - b);
+    const strikeIncrement = gaps.length ? gaps[Math.floor(gaps.length / 2)] : null;
+    const listedDte = [...new Set(chain.options.map((o) => o.dte))].sort((a, b) => a - b).slice(0, 8);
     return {
       kind: 'gex-dashboard-snapshot',
       symbol: chain.symbol,
@@ -470,6 +486,10 @@
         top_strikes_by_gex: topStrikes,
         top_strikes_by_vanna: topVanna,
       },
+      // tradeability: the listed strike grid step near spot and the real listed
+      // expiries (days) — structure legs must land on these, not invented levels
+      strike_increment: strikeIncrement,
+      listed_dte: listedDte,
       vol: volm && volm.ok ? {
         iv30_vix_style: r2(volm.vix30),
         vix_official: vixOfficial != null ? r2(vixOfficial) : null,
@@ -478,6 +498,9 @@
         term_slope_30_7: r2(volm.slope),
         fly_25d: volm.smile ? r2(volm.smile.fly) : null,
         skew_25d: volm.smile ? r2(volm.smile.rr) : null,
+        // the expiry the smile was actually measured at — sparse chains can push
+        // it far from 30d, and 30d-calibrated fly/skew thresholds don't transfer
+        smile_days: volm.smile ? Math.round(volm.smile.days) : null,
         term_structure: volm.term.filter((t) => t.days <= 130)
           .map((t) => ({ days: Math.round(t.days), iv: r2(t.iv) })),
         convexity_verdict: volm.read ? volm.read.verdict : null,

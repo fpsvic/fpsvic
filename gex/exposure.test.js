@@ -367,6 +367,16 @@ test('buildSnapshot carries the vanna/charm picture: flips, 1w nets, per-strike 
   }
 });
 
+test('buildSnapshot tradeability hints: strike grid step and real listed expiries', () => {
+  const ch = E.parseCboe(flatCboe({ S: 100, lo: 60, hi: 140, step: 1 }), 'TEST', NOW);
+  const snap = E.buildSnapshot(ch, { ok: false }, {});
+  assert.equal(snap.strike_increment, 1, 'unit-spaced synthetic grid -> increment 1');
+  assert.ok(Array.isArray(snap.listed_dte) && snap.listed_dte.length > 0, 'listed expiries present');
+  for (let i = 1; i < snap.listed_dte.length; i++) assert.ok(snap.listed_dte[i] > snap.listed_dte[i - 1], 'dte ascending');
+  const chainDtes = new Set(ch.options.map((o) => o.dte));
+  for (const d of snap.listed_dte) assert.ok(chainDtes.has(d), 'every listed_dte is a REAL chain expiry');
+});
+
 // ---------------------------------------------------------------- third-order greeks
 
 test('bsGreeks3: speed/color/zomma/vomma/ultima match finite differences of the lower greeks', () => {

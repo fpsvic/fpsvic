@@ -187,7 +187,9 @@ is the design goal: the rubric mechanically maps regimes to playbooks (with a
 dedicated vanna/charm-flows step and an explicit confidence-calibration scale so
 "high" is earned, not defaulted away from), the schema fixes the output shape, inputs
 are rounded so identical market states serialize identically, and responses are cached
-for 10 minutes on a hash of the snapshot. Same data in, same read out.
+for 10 minutes on a hash of the snapshot. Same data in, same read out — in substance
+always (the rubric is mechanical), bit-for-bit within the cache window (the model API
+itself is not deterministic across separate calls).
 
 Reads are **account-aware**: the server injects `GEX_ACCOUNT_SIZE` (default $2,500)
 into every snapshot, every proposed structure must carry an estimated max risk in
