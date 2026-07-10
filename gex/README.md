@@ -168,13 +168,15 @@ A per-strike table view backs every chart, and the whole thing supports dark mod
   (`node gex/metrics.test.js` runs the suite).
 - **Realized vol** — annualized close-to-close over the trailing 21 sessions
   (zero-mean convention), from the free CBOE daily history.
-- **Convexity read** — a transparent, weighted heuristic on three inputs, each centered
-  on its typical SPX value: vol risk premium (IV30 − RV21, centered +3), term slope
-  (IV30 − IV7, centered +1.5; negative = backwardation), and the 25Δ butterfly
-  (centered +1). Score > 0.2 → convexity **bid** (traders paying up for optionality),
-  < −0.2 → **offered** (optionality cheap / supplied), else **balanced**. It measures
-  the *price* of convexity — the accepted proxy for demand vs supply — not actual
-  order flow, which needs positioning data no free feed provides.
+- **Convexity read** — a transparent, weighted heuristic on three inputs, each judged
+  as a **fraction of the name's own IV30** (centers 0.20 / 0.10 / 0.07 — the typical
+  SPX raw values +3 / +1.5 / +1 at 15-vol): vol risk premium (IV30 − RV21), term slope
+  (IV30 − IV7; negative = backwardation), and the 25Δ butterfly. Normalizing keeps the
+  verdict fair across vol levels — a +5-point premium is fat on a 14-vol index and
+  noise on a 60-vol single name. Score > 0.2 → convexity **bid** (traders paying up
+  for optionality), < −0.2 → **offered** (optionality cheap / supplied), else
+  **balanced**. It measures the *price* of convexity — the accepted proxy for demand
+  vs supply — not actual order flow, which needs positioning data no free feed provides.
 
 ## The AI read
 
@@ -207,6 +209,29 @@ structure must carry an explicit invalidation level, missing inputs must be surf
 cautions rather than guessed, and nothing is ever executed — the output is a read, not
 an order. The model only sees numbers the dashboard computed; strings in the snapshot
 are declared data, not instructions.
+
+### Backtesting the reads
+
+Every read is archived with its input snapshot, and the market-state archiver writes
+what actually happened next — so the reads are gradeable after the fact:
+
+```bash
+node gex/backtest-reads.js            # grade every saved read
+node gex/backtest-reads.js SPX --json # one symbol, machine-readable
+```
+
+For each saved read it replays the RTH spot path from `gex/data/brain/` and grades the
+regime call (did a "pinned" tape actually stay inside the walls and under its expected
+move?), the wall levels named in the read (breached vs held, only when within 3% of
+spot — a wall 6% away makes no testable claim), and each structure's direction over
+fixed horizons (+1h/+3h/EOD/+1d/+3d). The headline table is **hit rate by confidence**
+— the calibration check: `high`-confidence structures should hit more often than `low`,
+or the rubric's calibration is wrong, and the per-rubric-version table shows whether a
+rubric change actually improved the reads. Honest scope: this grades direction and
+regime, not option P&L (the archive has no option quotes); neutral/vol grades are
+heuristics against the snapshot's own expected move (iv30/16 per day); reads generated
+after hours grade from the next archived session; small samples prove nothing.
+`node gex/backtest.test.js` tests the grading math.
 
 ## Honest limitations (why the paid tools cost money)
 

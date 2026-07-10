@@ -402,7 +402,9 @@
     const rvRes = M.realizedVol(closes ?? [], 21);
     const rv = rvRes.ok ? rvRes.value : null;
     const vrp = rv == null ? null : vix.value - rv;
-    const read = M.convexityRead({ vrp, slope, fly: smile ? smile.fly : null });
+    // iv30 normalizes the read so it's fair across vol levels (quant review:
+    // the raw SPX-centered variant overstated 'bid' on high-vol single names)
+    const read = M.convexityRead({ vrp, slope, fly: smile ? smile.fly : null, iv30: vix.value });
 
     return {
       ok: true,

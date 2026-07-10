@@ -498,8 +498,12 @@ function renderTermStructure(container) {
 }
 
 /* Plain-language interpretation of each convexity input, mirroring the
- * convexityRead() thresholds in metrics.js (centered on typical SPX values). */
+ * convexityRead() thresholds in metrics.js: every cutoff is a FRACTION of the
+ * name's own iv30 (the raw SPX-point cutoffs these replaced would call a
+ * 60-vol single name "rich" on inputs that are noise at that vol level —
+ * the notes must agree with the normalized verdict rendered next to them). */
 function volRows() {
+  const iv = Math.max(volm.vix30, 1); // same floor as metrics.js
   const rows = [];
   rows.push({
     k: '30d implied (VIX-style)', v: volm.vix30.toFixed(1),
@@ -512,7 +516,7 @@ function volRows() {
   if (volm.vrp != null) {
     rows.push({
       k: 'Vol risk premium', v: `${volm.vrp >= 0 ? '+' : ''}${volm.vrp.toFixed(1)} pts`,
-      note: volm.vrp >= 5 ? 'implied rich vs realized — buyers paying up'
+      note: volm.vrp / iv >= 0.33 ? 'implied rich vs realized — buyers paying up'
         : volm.vrp <= 0 ? 'implied below realized — convexity cheap'
         : 'typical premium — sellers collecting as usual',
     });
@@ -521,7 +525,7 @@ function volRows() {
     rows.push({
       k: 'Term slope (30d − 7d)', v: `${volm.slope >= 0 ? '+' : ''}${volm.slope.toFixed(1)} pts`,
       note: volm.slope <= 0 ? 'backwardation — urgent demand for near-dated protection'
-        : volm.slope >= 3 ? 'steep contango — no urgency in the front'
+        : volm.slope / iv >= 0.20 ? 'steep contango — no urgency in the front'
         : 'normal contango',
     });
   } else {
@@ -530,8 +534,8 @@ function volRows() {
   if (volm.smile) {
     rows.push({
       k: `25Δ butterfly (~${Math.round(volm.smile.days)}d)`, v: `${volm.smile.fly >= 0 ? '+' : ''}${volm.smile.fly.toFixed(2)} pts`,
-      note: volm.smile.fly >= 2 ? 'wings bid — tail convexity in demand'
-        : volm.smile.fly <= 0.5 ? 'wings soft — tails on offer'
+      note: volm.smile.fly / iv >= 0.13 ? 'wings bid — tail convexity in demand'
+        : volm.smile.fly / iv <= 0.033 ? 'wings soft — tails on offer'
         : 'wings near typical',
     });
     rows.push({

@@ -188,13 +188,40 @@ test('smileAtExpiry: curved skewed smile has positive fly and rr', () => {
 
 // ---------------------------------------------------------------- convexity read
 
-test('convexityRead verdicts', () => {
+test('convexityRead verdicts (legacy raw-point path, no iv30)', () => {
   assert.equal(M.convexityRead({ vrp: 10, slope: -3, fly: 3 }).verdict, 'bid');
   assert.equal(M.convexityRead({ vrp: -2, slope: 4, fly: 0 }).verdict, 'offered');
   assert.equal(M.convexityRead({ vrp: 3, slope: 1.5, fly: 1 }).verdict, 'balanced');
   assert.equal(M.convexityRead({}).ok, false);
   // partial inputs still produce a read
   assert.ok(M.convexityRead({ slope: -4 }).ok);
+});
+
+test('convexityRead normalized by iv30: fair across vol levels', () => {
+  // at SPX-typical iv=15 the fraction centers equal the legacy raw centers, so
+  // the balanced point is preserved: vrp 3 / slope 1.5 / fly ~1 stays balanced
+  assert.equal(M.convexityRead({ vrp: 3, slope: 1.5, fly: 1.05, iv30: 15 }).verdict, 'balanced');
+  // the quant-review case: +5 vrp on a 60-vol name is NOISE (0.083 of iv) —
+  // normalized it reads offered/cheap, while the legacy path overrates it
+  const highVol = { vrp: 5, slope: 2, fly: 1.5 };
+  assert.equal(M.convexityRead({ ...highVol, iv30: 60 }).verdict, 'offered', 'normalized: mild premium on 60-vol = convexity offered');
+  // and a genuinely bid high-vol name still reads bid: +20 vrp on 60-vol (0.33 of iv)
+  assert.equal(M.convexityRead({ vrp: 20, slope: -4, fly: 5, iv30: 60 }).verdict, 'bid');
+  // score scales with the FRACTION: +5 vrp is a strong signal at iv=14, noise at iv=60
+  const idx = M.convexityRead({ vrp: 5, iv30: 14 }).score;
+  const single = M.convexityRead({ vrp: 5, iv30: 60 }).score;
+  assert.ok(idx > 0.4 && single < 0, `fractional scaling (idx ${idx.toFixed(2)} vs single ${single.toFixed(2)})`);
+});
+
+test('volMispricingScore corroborator inherits the normalized convexity read', () => {
+  // 60-vol name, mild raw premium: the old raw-centered corroborator pushed the
+  // conv signal toward rich; normalized, it agrees with the primary signals
+  const r = M.volMispricingScore({ iv30: 60, vrp: 5, slope: 2, fly: 1.5 });
+  assert.ok(r.ok);
+  const conv = r.signals.find((s) => s.name === 'conv');
+  assert.ok(conv, 'corroborator present');
+  assert.ok(conv.x <= 0, `conv signal is non-rich for a mild premium on a 60-vol name (x=${conv.x.toFixed(2)})`);
+  assert.equal(r.direction, 'cheap');
 });
 
 // ---------------------------------------------------------------- vol-mispricing score

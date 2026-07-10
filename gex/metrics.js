@@ -260,17 +260,30 @@
 
   /* Heuristic composite: is the market bidding for convexity or supplying it?
    * Inputs (any may be null when unavailable; weights renormalize):
-   *   vrp   - 30d implied minus realized vol, vol pts. Typical SPX ~ +3; much higher
-   *           means buyers paying up, negative means implied under realized.
-   *   slope - iv30 - iv7, vol pts. Normal contango ~ +1.5; negative (backwardation)
-   *           = urgent demand for near-dated convexity.
-   *   fly   - 25d butterfly, vol pts. Typical SPX 30d ~ +1; higher = wings/tails bid.
+   *   vrp   - 30d implied minus realized vol, vol pts.
+   *   slope - iv30 - iv7, vol pts. Negative (backwardation) = urgent demand
+   *           for near-dated convexity.
+   *   fly   - 25d butterfly, vol pts. Higher = wings/tails bid.
+   *   iv30  - the vol level itself. WHEN PRESENT, every input is judged as a
+   *           FRACTION of iv30 (centers 0.20/0.10/0.07 — the SPX-typical raw
+   *           values 3/1.5/1 at iv=15, and exactly volMispricingScore's
+   *           centers) so a +5pt premium reads rich on a 14-vol index and
+   *           unremarkable on a 60-vol single name. Without iv30 the legacy
+   *           raw SPX-point centers apply — index-calibrated only; the quant
+   *           review showed they overstate 'bid' on high-vol names.
    * Returns { ok, score in [-1,1], verdict: 'bid'|'offered'|'balanced' }. */
-  function convexityRead({ vrp = null, slope = null, fly = null }) {
+  function convexityRead({ vrp = null, slope = null, fly = null, iv30 = null }) {
     const parts = [];
-    if (vrp != null && isFinite(vrp)) parts.push({ w: 0.5, x: clamp((vrp - 3) / 4, -1, 1) });
-    if (slope != null && isFinite(slope)) parts.push({ w: 0.3, x: clamp(-(slope - 1.5) / 2, -1, 1) });
-    if (fly != null && isFinite(fly)) parts.push({ w: 0.2, x: clamp((fly - 1) / 1, -1, 1) });
+    if (iv30 != null && isFinite(iv30)) {
+      const IVf = Math.max(iv30, 1); // same floor as volMispricingScore
+      if (vrp != null && isFinite(vrp)) parts.push({ w: 0.5, x: clamp((vrp / IVf - 0.20) / 0.25, -1, 1) });
+      if (slope != null && isFinite(slope)) parts.push({ w: 0.3, x: clamp(-(slope / IVf - 0.10) / 0.13, -1, 1) });
+      if (fly != null && isFinite(fly)) parts.push({ w: 0.2, x: clamp((fly / IVf - 0.07) / 0.07, -1, 1) });
+    } else {
+      if (vrp != null && isFinite(vrp)) parts.push({ w: 0.5, x: clamp((vrp - 3) / 4, -1, 1) });
+      if (slope != null && isFinite(slope)) parts.push({ w: 0.3, x: clamp(-(slope - 1.5) / 2, -1, 1) });
+      if (fly != null && isFinite(fly)) parts.push({ w: 0.2, x: clamp((fly - 1) / 1, -1, 1) });
+    }
     if (!parts.length) return { ok: false, reason: 'no inputs' };
     const wSum = parts.reduce((a, p) => a + p.w, 0);
     const score = parts.reduce((a, p) => a + p.w * p.x, 0) / wSum;
@@ -308,9 +321,11 @@
     if (!fin(iv30)) return { ok: false, reason: 'no vol data' };
     const IVf = Math.max(iv30, 1); // floor: single-digit iv would blow the fractions up
 
-    // corroborator: derive convexityRead's own score if the caller did not pass one
+    // corroborator: derive convexityRead's own score if the caller did not pass
+    // one — normalized by iv30, or the raw SPX-centered legacy read would leak
+    // its high-vol 'bid' bias into this deliberately vol-fair rank
     if (!fin(convScore) && (fin(vrp) || fin(slope) || fin(fly))) {
-      const cr = convexityRead({ vrp, slope, fly });
+      const cr = convexityRead({ vrp, slope, fly, iv30 });
       convScore = cr.ok ? cr.score : null;
     }
 
