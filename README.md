@@ -41,3 +41,10 @@ Create a production build with:
 ```bash
 npm run build
 ```
+
+# Dodge Blitz (mobile)
+
+A native mobile arcade game — drag to dodge falling obstacles, survive as
+long as possible — implemented separately in Swift (iOS/SpriteKit) and
+Kotlin (Android). See [mobile/README.md](mobile/README.md) for build
+instructions.

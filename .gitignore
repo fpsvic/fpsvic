@@ -6,3 +6,11 @@ dist
 
 # brain snapshot archive (raw market data, grows daily)
 gex/data/
+
+# mobile build tooling
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/local.properties
+mobile/ios/*.xcodeproj/
+mobile/ios/DerivedData/
