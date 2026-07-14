@@ -27,6 +27,27 @@ You can also open `gex/scan.html` or `gex/index.html` directly as a file and cli
 **Demo scan** / **Demo data**, but live quotes need the little server because browsers
 block cross-origin requests to CBOE.
 
+## Deploying to Vercel
+
+The routing logic lives in `lib/` and is shared byte-for-byte between `server.js`
+(local dev, raw `http.Server`) and the serverless functions in `api/` (Vercel). To deploy:
+
+1. In the Vercel project's settings, set **Root Directory** to `gex`.
+2. Connect a **Vercel Blob** store to the project (Storage tab). Once connected, Vercel
+   injects `BLOB_READ_WRITE_TOKEN` automatically — that's what makes `lib/archive.js`
+   switch from the local `data/brain`/`data/reads` filesystem layout to Blob storage, so
+   the AI-read journal (`/api/reads`, `/api/reads/latest`) keeps working in production.
+   Without a Blob store connected, `/api/analyze` still works, it just won't archive reads.
+3. Set project environment variables: `ANTHROPIC_API_KEY` (required for `/api/analyze`),
+   and optionally `TRADIER_TOKEN` (real-time quotes instead of CBOE's ~15-min-delayed
+   feed) and `GEX_ACCOUNT_SIZE`. Never commit these — `gex/.env` is local-only and
+   gitignored.
+4. Deploy. `/` rewrites to `scan.html` (see `vercel.json`); everything else (`index.html`,
+   `macro.html`, `app.js`, etc.) is served as static assets automatically.
+
+Local dev (`node gex/server.js`) is unaffected either way — it always uses the fs archive
+backend and never touches `@vercel/blob` or Vercel-specific env vars.
+
 ## The scanner
 
 The landing page scans a watchlist and ranks each ticker by a **cross-ticker

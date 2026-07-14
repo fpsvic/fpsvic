@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "api/**/*.js": {
+      "includeFiles": "{metrics.js,exposure.js}"
+    }
+  },
+  "rewrites": [
+    { "source": "/", "destination": "/scan.html" }
+  ]
+}

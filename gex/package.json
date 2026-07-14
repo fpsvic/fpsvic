@@ -1,0 +1,17 @@
+{
+  "name": "personal-gex",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal GEX dashboard — dealer gamma/vanna/charm exposure, VIX-style implied vol, and AI reads.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "node server.js",
+    "test": "node metrics.test.js && node exposure.test.js && GEX_NO_LISTEN=1 node scan.test.js && GEX_NO_LISTEN=1 node analyze.test.js && node backtest.test.js"
+  },
+  "dependencies": {
+    "@vercel/blob": "^2.6.1"
+  }
+}
