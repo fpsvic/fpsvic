@@ -6,3 +6,6 @@ dist
 
 # brain snapshot archive (raw market data, grows daily)
 gex/data/
+
+# local Claude Code settings
+.claude/
