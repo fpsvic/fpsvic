@@ -1,10 +1,12 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "redirects": [
+    { "source": "/", "destination": "/scan.html", "permanent": false }
+  ],
   "functions": {
     "api/**/*.js": {
       "includeFiles": "{metrics.js,exposure.js}"
     }
-  },
-  "rewrites": [
-    { "source": "/", "destination": "/scan.html" }
-  ]
+  }
 }

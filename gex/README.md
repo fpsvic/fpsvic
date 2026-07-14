@@ -42,8 +42,13 @@ The routing logic lives in `lib/` and is shared byte-for-byte between `server.js
    and optionally `TRADIER_TOKEN` (real-time quotes instead of CBOE's ~15-min-delayed
    feed) and `GEX_ACCOUNT_SIZE`. Never commit these — `gex/.env` is local-only and
    gitignored.
-4. Deploy. `/` rewrites to `scan.html` (see `vercel.json`); everything else (`index.html`,
+4. Deploy. `/` redirects to `scan.html` — a redirect, not a rewrite, because Vercel's
+   directory-index behavior would otherwise serve `index.html` (the single-ticker
+   dashboard) at `/` before a rewrite is ever consulted. Everything else (`index.html`,
    `macro.html`, `app.js`, etc.) is served as static assets automatically.
+   `vercel.json` also pins `"framework": null` so a stale framework preset on the
+   Vercel project (say, Vite from a previous life of the repo) can't inject a
+   nonexistent build step — this app has no build.
 
 Local dev (`node gex/server.js`) is unaffected either way — it always uses the fs archive
 backend and never touches `@vercel/blob` or Vercel-specific env vars.
