@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "builds": [
+    {
+      "src": "gex/api/**/*.js",
+      "use": "@vercel/node",
+      "config": { "includeFiles": ["gex/metrics.js", "gex/exposure.js"] }
+    },
+    { "src": "gex/**", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/", "status": 307, "headers": { "Location": "/scan.html" } },
+    { "src": "/api/reads/latest", "dest": "/gex/api/reads/latest.js" },
+    { "src": "/api/scan/row", "dest": "/gex/api/scan/row.js" },
+    { "src": "/api/(analyze|brain|chain|history|reads|vix)", "dest": "/gex/api/$1.js" },
+    { "src": "/(.*)", "dest": "/gex/$1" }
+  ]
+}
